@@ -12,9 +12,13 @@ type Env struct {
 }
 
 func LoadEnv() (*Env, error) {
-	err := godotenv.Load()
+	err := godotenv.Load("../.env")
 	if err != nil {
-		return nil, err
+		// Try current directory as fallback
+		err = godotenv.Load()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &Env{
