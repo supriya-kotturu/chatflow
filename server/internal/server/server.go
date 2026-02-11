@@ -44,9 +44,9 @@ type Server struct {
 	Stats
 }
 
-func NewServerMux() *Server {
+func NewServerMux(bufferSize int) *Server {
 	return &Server{
-		BufferSize: 2048,
+		BufferSize: bufferSize,
 		Mux:        http.NewServeMux(),
 		Rooms:      make(map[string]*Room),
 		Mu:         sync.RWMutex{},
@@ -73,11 +73,11 @@ func (s *Server) Start() {
 	fileServer := http.FileServer(http.Dir("server/html/"))
 	s.Mux.Handle("/static/", http.StripPrefix("/static/", fileServer))
 
-	// s.Mux.HandleFunc("GET /{$}", HomeHandler)
+	s.Mux.HandleFunc("GET /{$}", s.HomeHandler)
 	s.Mux.HandleFunc("/health", s.HealthHandler)
 	s.Mux.HandleFunc("/chat/{roomId}", s.ChatRoomHandler)
 
-	// mux.HandleFunc("GET /chat/{roomId}", handlers.ChatRoomPageHandler)
+	s.Mux.HandleFunc("GET /chat/{roomId}", s.ChatRoomPageHandler)
 
 	if err := http.ListenAndServe(*addr, s.Mux); err != nil {
 		fmt.Printf("Error starting the server: %+v\n", err)

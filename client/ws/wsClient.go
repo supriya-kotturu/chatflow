@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"supriyakotturu.github.com/chatflow/pkg/models"
@@ -22,9 +23,24 @@ type WsClient struct {
 func NewWsClient(messageBuffer int, port string, roomId string) (*WsClient, error) {
 	chatRoomUrl := url.URL{Scheme: "ws", Host: "localhost:" + port, Path: "/chat/" + roomId}
 	dailer := websocket.DefaultDialer
-	conn, resp, err := dailer.Dial(chatRoomUrl.String(), nil)
+
+	maxRetries := 5
+	backoff := 1 * time.Second
+	var conn *websocket.Conn
+	var err error
+
+	for attempt := range maxRetries {
+		conn, _, err = dailer.Dial(chatRoomUrl.String(), nil)
+		if err == nil {
+			break
+		}
+		fmt.Printf("attempt %d failed: %v, retrying in %v...\n", attempt+1, err, backoff)
+		time.Sleep(backoff)
+		backoff *= 2
+	}
+
 	if err != nil {
-		return nil, fmt.Errorf("dial %s: %w (resp: %+v)", chatRoomUrl.String(), err, resp)
+		return nil, fmt.Errorf("dial %s after %d attempts: %w", chatRoomUrl.String(), maxRetries, err)
 	}
 
 	c := &WsClient{
@@ -55,12 +71,11 @@ func (c *WsClient) Read() {
 	for {
 		var msg models.Response
 		if err := c.Conn.ReadJSON(&msg); err != nil {
-			// avoid logging interruption errors (e.g using ctrl+c to terminate the client)
-			// 2026/01/30 01:31:54 read error: read tcp [::1]:56499->[::1]:3000: use of closed network connection
+			// to avoid logging interruption errors (e.g using ctrl+c to terminate the client)
+			// ERR: 2026/01/30 01:31:54 read error: read tcp [::1]:56499->[::1]:3000: use of closed network connection
 			if errors.Is(err, net.ErrClosed) || websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				return
 			}
-			// log.Println("read error: ", err)
 			return
 		}
 		select {

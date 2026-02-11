@@ -44,7 +44,7 @@ func ParallelMessages(config *client.ClientConfig) {
 
 				// Channel to signal when all messages are received
 				msgDone := make(chan struct{})
-				expectedMsgs := cf.MessageCount + 2 // JOIN + 2 TEXT + LEAVE
+				expectedMsgs := cf.MessageCount + 2 // JOIN + TEXT + LEAVE
 				receivedMsgs := 0
 
 				go func(room string, client *client.WsClient) {
@@ -125,21 +125,33 @@ func SequentialMessages(config *client.ClientConfig) {
 	start := time.Now()
 
 	fmt.Println("Starting sequential messages...")
+
 	go c.GenerateMessages()
+	go c.CollectMetrics(ctx)
 	c.WriteMessages(ctx)
 	c.Wg.Wait()
 
 	end := time.Since(start)
 	fmt.Println("Total time: ", end.Seconds())
+
+	c.CloseChannels()
+	c.GetOverAllStats()
+
+	if c.CSVWriter != nil {
+		c.CSVWriter.Flush()
+		c.CSVWriter.Fd.Close()
+
+	}
 }
 
 func main() {
 	config := &client.ClientConfig{
-		PoolSize:      320, // 32 * 10
-		UserCount:     32,
-		MessageCount:  1000,
-		RoomCount:     10,
-		MessageBuffer: 1250,
+		PoolSize:       320, // total concurrent sessions: 32 * 10 [Allows one user to parallelly join 10 rooms]
+		UserCount:      32,
+		MessageCount:   1000,
+		RoomCount:      10,
+		MessageBuffer:  1250,
+		CollectMetrics: true,
 	}
 
 	// ParallelMessages(config) //30.3093569

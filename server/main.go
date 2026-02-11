@@ -3,6 +3,7 @@ package main
 import server "supriyakotturu.github.com/chatflow/server/internal/server"
 
 func main() {
-	s := server.NewServerMux()
+	bufferSize := 2048
+	s := server.NewServerMux(bufferSize)
 	s.Start()
 }
