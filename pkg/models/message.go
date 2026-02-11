@@ -40,7 +40,7 @@ type Message struct {
 	UserId      string      `json:"userId"`
 	Username    string      `json:"username"`
 	Message     string      `json:"message"`
-	Timestamp   int64       `json:"timestamp"`
+	Timestamp   string      `json:"timestamp"`
 	MessageType MessageType `json:"messageType"`
 }
 
@@ -98,8 +98,8 @@ func (m *Message) validateMessage(errorMap map[string]string) {
 
 // validateTimestamp validates the timestamp field.
 func (m *Message) validateTimestamp(errorMap map[string]string) {
-	if m.Timestamp == 0 {
-		errorMap["Timestamp"] = "Timestamp cannot be zero"
+	if m.Timestamp == "" {
+		errorMap["Timestamp"] = "Timestamp cannot be empty"
 	}
 }
 

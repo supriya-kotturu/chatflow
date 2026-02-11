@@ -8,7 +8,7 @@ import (
 // Response represents the server response after processing a request.
 type Response struct {
 	Message
-	ServerTimestamp int64  `json:"serverTimestamp"`
+	ServerTimestamp string `json:"serverTimestamp"`
 	Status          int    `json:"status"`
 	Error           string `json:"error,omitempty"`
 	Data            any    `json:"data,omitempty"`
@@ -19,7 +19,7 @@ func NewResponse(message Message) *Response {
 	err := message.Validate()
 	if err != nil {
 		return &Response{
-			ServerTimestamp: time.Now().UnixMilli(),
+			ServerTimestamp: time.Now().UTC().Format(time.RFC3339Nano),
 			Status:          http.StatusUnprocessableEntity,
 			Error:           "Incorrect message format",
 			Data:            err,
@@ -27,7 +27,7 @@ func NewResponse(message Message) *Response {
 	}
 
 	return &Response{
-		ServerTimestamp: time.Now().UnixMilli(),
+		ServerTimestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Status:          http.StatusOK,
 		Message:         message,
 		Data:            message,
