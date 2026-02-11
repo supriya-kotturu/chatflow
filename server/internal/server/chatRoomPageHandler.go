@@ -1,4 +1,4 @@
-package handlers
+package internal
 
 import (
 	"html/template"
@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 )
 
-func ChatRoomPageHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) ChatRoomPageHandler(w http.ResponseWriter, r *http.Request) {
 	roomId := r.PathValue("roomId")
 	tmplPath := filepath.Join("server", "html", "index.html")
 	tmpl := template.Must(template.ParseFiles(tmplPath))
-	
+
 	data := map[string]string{
 		"Title": "Chat Room " + roomId,
 	}

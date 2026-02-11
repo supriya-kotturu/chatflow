@@ -1,4 +1,4 @@
-package handlers
+package internal
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-func HomeHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HomeHandler(w http.ResponseWriter, r *http.Request) {
 	tmplPath := filepath.Join("server", "html", "index.html")
 	tmpl := template.Must(template.ParseFiles(tmplPath))
 	data := map[string]string{
