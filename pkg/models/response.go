@@ -7,10 +7,11 @@ import (
 
 // Response represents the server response after processing a request.
 type Response struct {
-	Timestamp time.Time `json:"timestamp"`
-	Status    int       `json:"status"`
-	Message   string    `json:"message,omitempty"`
-	Data      any       `json:"data,omitempty"`
+	Message
+	ServerTimestamp int64  `json:"serverTimestamp"`
+	Status          int    `json:"status"`
+	Error           string `json:"error,omitempty"`
+	Data            any    `json:"data,omitempty"`
 }
 
 // NewResponse creates a new Response based on the provided Message.
@@ -18,17 +19,17 @@ func NewResponse(message Message) *Response {
 	err := message.Validate()
 	if err != nil {
 		return &Response{
-			Timestamp: time.Now(),
-			Status:    http.StatusUnprocessableEntity,
-			Message:   "Incorrect message format",
-			Data:      err,
+			ServerTimestamp: time.Now().UnixMilli(),
+			Status:          http.StatusUnprocessableEntity,
+			Error:           "Incorrect message format",
+			Data:            err,
 		}
 	}
 
 	return &Response{
-		Timestamp: time.Now(),
-		Status:    http.StatusOK,
-		Message:   "Message processed successfully",
-		Data:      message,
+		ServerTimestamp: time.Now().UnixMilli(),
+		Status:          http.StatusOK,
+		Message:         message,
+		Data:            message,
 	}
 }

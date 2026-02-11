@@ -1,6 +1,7 @@
 package generate
 
 import (
+	"fmt"
 	"math/rand"
 	"strconv"
 
@@ -77,25 +78,41 @@ func ChatRoomId() string {
 	return strconv.Itoa(rand.Intn(20) + 1)
 }
 
-func MessageType() models.MessageType {
-	r := rand.Intn(100)
-	if r < 90 {
-		return models.MessageTypeText
-	} else if r < 95 {
-		return models.MessageTypeJoin
-	}
-	return models.MessageTypeLeave
+func NewJoinMessage(userId string, chatRoom string) *models.Message {
+	username := Username(userId)
+	return models.NewMessage(userId, username, "", models.MessageTypeJoin)
 }
 
-func NewMessage() *models.Message {
-	userId := UserId()
+func NewLeaveMessage(userId string, chatRoom string) *models.Message {
 	username := Username(userId)
-	messageType := MessageType()
-	message := ""
+	return models.NewMessage(userId, username, "", models.MessageTypeLeave)
+}
 
-	if messageType == models.MessageTypeText {
-		message = Message()
-	}
+func NewMessage(userId string) *models.Message {
+	username := Username(userId)
+	messageType := models.MessageTypeText
+	message := Message()
 
 	return models.NewMessage(userId, username, message, messageType)
+}
+
+func NewRooms(size int) []string {
+	seen := make(map[string]struct{})
+	rooms := make([]string, 0, size)
+	for len(rooms) < size {
+		id := ChatRoomId()
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			rooms = append(rooms, id)
+		}
+	}
+	return rooms
+}
+
+func NewUsers(size int) []string {
+	users := make([]string, size)
+	for idx := range users {
+		users[idx] = fmt.Sprintf("usr-%d", idx+1)
+	}
+	return users
 }

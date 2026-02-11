@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // MessageType represents the type of message being sent.
@@ -41,7 +40,7 @@ type Message struct {
 	UserId      string      `json:"userId"`
 	Username    string      `json:"username"`
 	Message     string      `json:"message"`
-	Timestamp   time.Time   `json:"timestamp"`
+	Timestamp   int64       `json:"timestamp"`
 	MessageType MessageType `json:"messageType"`
 }
 
@@ -52,14 +51,19 @@ func NewMessage(userId string, username string, message string, messageType Mess
 		UserId:      userId,
 		Username:    username,
 		Message:     message,
-		Timestamp:   time.Now(),
 		MessageType: messageType,
 	}
 }
 
 // validateUserId validates the user ID field.
 func (m *Message) validateUserId(errorMap map[string]string) {
-	if id, err := strconv.Atoi(m.UserId); err != nil || id < minUserId || id > maxUserId {
+	segments := strings.Split(m.UserId, "-")
+	userId := segments[1]
+
+	if m.UserId == "" {
+		errorMap["UserId"] = "UserId cannot be empty"
+	}
+	if id, err := strconv.Atoi(userId); err != nil || id < minUserId || id > maxUserId {
 		if err != nil {
 			errorMap["UserId"] = "UserId must be a valid integer"
 		} else if id < minUserId {
@@ -94,7 +98,7 @@ func (m *Message) validateMessage(errorMap map[string]string) {
 
 // validateTimestamp validates the timestamp field.
 func (m *Message) validateTimestamp(errorMap map[string]string) {
-	if m.Timestamp.IsZero() {
+	if m.Timestamp == 0 {
 		errorMap["Timestamp"] = "Timestamp cannot be zero"
 	}
 }
