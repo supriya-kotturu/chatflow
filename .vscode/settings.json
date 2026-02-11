@@ -4,6 +4,7 @@
         "dailer",
         "gorm",
         "supriyakotturu",
+        "testdata",
         "tmpl"
     ]
 }
