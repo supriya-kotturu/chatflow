@@ -12,6 +12,8 @@ import (
 	"supriyakotturu.github.com/chatflow/pkg/models"
 )
 
+// WsClient wraps a single WebSocket connection to a chat room.
+// It owns a reader goroutine that pushes responses into Send.
 type WsClient struct {
 	ChatRoomId string
 	Conn       *websocket.Conn
@@ -20,6 +22,8 @@ type WsClient struct {
 	OwnerUser  string
 }
 
+// NewWsClient dials a WebSocket connection to the given room with exponential
+// backoff retry and starts a background reader goroutine.
 func NewWsClient(messageBuffer int, port string, roomId string) (*WsClient, error) {
 	chatRoomUrl := url.URL{Scheme: "ws", Host: "localhost:" + port, Path: "/chat/" + roomId}
 	dailer := websocket.DefaultDialer
@@ -54,6 +58,7 @@ func NewWsClient(messageBuffer int, port string, roomId string) (*WsClient, erro
 	return c, nil
 }
 
+// Close closes the underlying WebSocket connection.
 func (c *WsClient) Close() error {
 	if c == nil || c.Conn == nil {
 		return nil
@@ -61,12 +66,15 @@ func (c *WsClient) Close() error {
 	return c.Conn.Close()
 }
 
+// Write sends a message as JSON over the WebSocket connection.
 func (c *WsClient) Write(m *models.Message) error {
 	c.WriteMu.Lock()
 	defer c.WriteMu.Unlock()
 	return c.Conn.WriteJSON(m)
 }
 
+// Read continuously reads responses from the server and forwards them to Send.
+// It silently exits on connection close or network errors.
 func (c *WsClient) Read() {
 	for {
 		var msg models.Response

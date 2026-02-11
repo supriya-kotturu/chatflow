@@ -7,6 +7,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// Pool manages a bounded set of WebSocket connections keyed by "userId:roomId".
+// A semaphore limits the total number of concurrent connections.
 type Pool struct {
 	Port  string
 	Conns map[string]*WsClient
@@ -14,6 +16,7 @@ type Pool struct {
 	Mu    sync.RWMutex
 }
 
+// NewWsClientPool creates a Pool with the given concurrency limit and server port.
 func NewWsClientPool(size int, port string) *Pool {
 	return &Pool{
 		Port:  port,
@@ -23,6 +26,7 @@ func NewWsClientPool(size int, port string) *Pool {
 	}
 }
 
+// CloseAll closes and removes all connections in the pool.
 func (p *Pool) CloseAll() {
 	p.Mu.Lock()
 	for k, c := range p.Conns {
@@ -32,6 +36,7 @@ func (p *Pool) CloseAll() {
 	p.Mu.Unlock()
 }
 
+// Remove sends a close frame, closes the connection, and releases the semaphore slot.
 func (p *Pool) Remove(userId string, roomId string) {
 	p.Mu.Lock()
 
@@ -52,6 +57,8 @@ func (p *Pool) getKey(userId, roomId string) string {
 	return userId + ":" + roomId
 }
 
+// GetOrCreateNewWsClient returns an existing connection or creates a new one.
+// Uses double-check locking to avoid duplicate connections under concurrency.
 func (p *Pool) GetOrCreateNewWsClient(userId string, roomId string) (*WsClient, error) {
 	key := p.getKey(userId, roomId)
 	p.Mu.RLock()

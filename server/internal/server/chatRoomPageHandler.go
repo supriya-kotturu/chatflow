@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 )
 
+// ChatRoomPageHandler renders the HTML page for a specific chat room.
 func (s *Server) ChatRoomPageHandler(w http.ResponseWriter, r *http.Request) {
 	roomId := r.PathValue("roomId")
 	tmplPath := filepath.Join("server", "html", "index.html")

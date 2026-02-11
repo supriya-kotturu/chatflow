@@ -1,3 +1,4 @@
+// Command client runs the ChatFlow load-testing client against the server.
 package main
 
 import (
@@ -13,6 +14,8 @@ import (
 	"supriyakotturu.github.com/chatflow/pkg/generate"
 )
 
+// ParallelMessages sends messages across all users and rooms concurrently,
+// with each user managing its own rooms in parallel.
 func ParallelMessages(config *client.ClientConfig) {
 	e, err := env.LoadEnv()
 	if err != nil {
@@ -115,6 +118,8 @@ func ParallelMessages(config *client.ClientConfig) {
 	fmt.Println("Total time: ", end.Seconds())
 }
 
+// SequentialMessages generates connections via a channel pipeline, writes
+// messages, collects metrics, and prints aggregate stats on completion.
 func SequentialMessages(config *client.ClientConfig) {
 	c := client.NewClient(config)
 	defer c.Pool.CloseAll()

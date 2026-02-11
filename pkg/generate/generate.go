@@ -1,3 +1,5 @@
+// Package generate provides factory functions for creating test users,
+// rooms, and messages used by the load-testing client.
 package generate
 
 import (
@@ -61,33 +63,40 @@ var messages []string = []string{
 	"What do you call a group of disorganized cats? A cat-astrophe!",
 }
 
+// UserId returns a random numeric user ID between 1 and 100000.
 func UserId() string {
 	return strconv.Itoa(rand.Intn(100000) + 1)
 }
 
+// Username returns a username in the form "user-{userId}".
 func Username(userId string) string {
 	return string("user-" + userId)
 }
 
+// Message returns a random message from the predefined pool.
 func Message() string {
 	idx := rand.Intn(len(messages))
 	return strconv.Itoa(idx) + "--" + messages[idx]
 }
 
+// ChatRoomId returns a random room ID between 1 and 20.
 func ChatRoomId() string {
 	return strconv.Itoa(rand.Intn(20) + 1)
 }
 
+// NewJoinMessage creates a JOIN message for the given user and room.
 func NewJoinMessage(userId string, chatRoom string) *models.Message {
 	username := Username(userId)
 	return models.NewMessage(userId, username, "", models.MessageTypeJoin)
 }
 
+// NewLeaveMessage creates a LEAVE message for the given user and room.
 func NewLeaveMessage(userId string, chatRoom string) *models.Message {
 	username := Username(userId)
 	return models.NewMessage(userId, username, "", models.MessageTypeLeave)
 }
 
+// NewMessage creates a TEXT message with a random body for the given user.
 func NewMessage(userId string) *models.Message {
 	username := Username(userId)
 	messageType := models.MessageTypeText
@@ -96,6 +105,7 @@ func NewMessage(userId string) *models.Message {
 	return models.NewMessage(userId, username, message, messageType)
 }
 
+// NewRooms returns a slice of unique random room IDs.
 func NewRooms(size int) []string {
 	seen := make(map[string]struct{})
 	rooms := make([]string, 0, size)
@@ -109,6 +119,7 @@ func NewRooms(size int) []string {
 	return rooms
 }
 
+// NewUsers returns a slice of user IDs in the form "usr-1", "usr-2", etc.
 func NewUsers(size int) []string {
 	users := make([]string, size)
 	for idx := range users {

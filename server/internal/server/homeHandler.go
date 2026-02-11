@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 )
 
+// HomeHandler renders the landing page.
 func (s *Server) HomeHandler(w http.ResponseWriter, r *http.Request) {
 	tmplPath := filepath.Join("server", "html", "index.html")
 	tmpl := template.Must(template.ParseFiles(tmplPath))

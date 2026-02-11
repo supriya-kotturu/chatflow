@@ -1,3 +1,4 @@
+// Command server starts the ChatFlow WebSocket server.
 package main
 
 import server "supriyakotturu.github.com/chatflow/server/internal/server"

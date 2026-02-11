@@ -1,3 +1,4 @@
+// Package env loads environment configuration from .env files.
 package env
 
 import (
@@ -6,11 +7,14 @@ import (
 	"github.com/lpernett/godotenv"
 )
 
+// Env holds application configuration loaded from environment variables.
 type Env struct {
 	Name string
 	Port string
 }
 
+// LoadEnv reads the .env file (parent dir first, then cwd) and returns
+// the parsed configuration.
 func LoadEnv() (*Env, error) {
 	err := godotenv.Load("../.env")
 	if err != nil {

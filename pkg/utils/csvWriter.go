@@ -1,3 +1,4 @@
+// Package utils provides shared utilities for the ChatFlow application.
 package utils
 
 import (
@@ -9,6 +10,7 @@ import (
 	"supriyakotturu.github.com/chatflow/pkg/models"
 )
 
+// CSVWriter is a thread-safe wrapper around csv.Writer for recording metrics.
 type CSVWriter struct {
 	FileName string
 	Writer   *csv.Writer
@@ -16,6 +18,7 @@ type CSVWriter struct {
 	mu       *sync.Mutex
 }
 
+// NewCSVWriter creates or truncates the given file and returns a CSVWriter.
 func NewCSVWriter(fileName string) (*CSVWriter, error) {
 	fd, err := os.Create(fileName)
 	if err != nil {
@@ -32,6 +35,7 @@ func NewCSVWriter(fileName string) (*CSVWriter, error) {
 	}, nil
 }
 
+// WriteHeader writes the CSV column headers.
 func (cw *CSVWriter) WriteHeader() {
 	header := []string{"Timestamp", "MessageType", "Latency", "StatusCode", "RoomId"}
 	if err := cw.Writer.Write(header); err != nil {
@@ -39,6 +43,7 @@ func (cw *CSVWriter) WriteHeader() {
 	}
 }
 
+// Write appends a single metric row to the CSV file.
 func (cw *CSVWriter) Write(metric models.Metric) {
 	cw.mu.Lock()
 	defer cw.mu.Unlock()
@@ -48,6 +53,7 @@ func (cw *CSVWriter) Write(metric models.Metric) {
 	}
 }
 
+// WriteAll writes multiple metric rows to the CSV file in one call.
 func (cw *CSVWriter) WriteAll(metrics []models.Metric) {
 	cw.mu.Lock()
 	defer cw.mu.Unlock()
@@ -60,6 +66,7 @@ func (cw *CSVWriter) WriteAll(metrics []models.Metric) {
 	cw.Writer.WriteAll(records)
 }
 
+// Flush writes any buffered data to the underlying file.
 func (cw *CSVWriter) Flush() {
 	cw.mu.Lock()
 	defer cw.mu.Unlock()

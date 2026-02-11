@@ -1,3 +1,6 @@
+// Package internal implements the ChatFlow WebSocket server.
+// It manages chat rooms, client connections, and message routing
+// using a one-connection-per-user-per-room architecture.
 package internal
 
 import (
@@ -15,11 +18,14 @@ import (
 	"supriyakotturu.github.com/chatflow/pkg/models"
 )
 
+// Stats tracks request success and failure counts using atomic counters.
 type Stats struct {
 	SuccessfulRequests atomic.Int64
 	FailedRequests     atomic.Int64
 }
 
+// Client represents a single user's WebSocket connection within a room.
+// Each client owns exactly one connection — no mutex is needed for writes.
 type Client struct {
 	Conn   *websocket.Conn
 	Send   chan *models.Response
@@ -27,6 +33,7 @@ type Client struct {
 	UserId string
 }
 
+// Room represents a chat room containing connected users.
 type Room struct {
 	ID        string
 	Users     map[string]*Client
@@ -36,6 +43,7 @@ type Room struct {
 	Mu        sync.RWMutex
 }
 
+// Server is the central hub that manages rooms, routes, and request stats.
 type Server struct {
 	BufferSize int
 	Mux        *http.ServeMux
@@ -44,6 +52,7 @@ type Server struct {
 	Stats
 }
 
+// NewServerMux creates a Server with the given per-client send buffer size.
 func NewServerMux(bufferSize int) *Server {
 	return &Server{
 		BufferSize: bufferSize,
@@ -53,14 +62,17 @@ func NewServerMux(bufferSize int) *Server {
 	}
 }
 
+// RecordSuccess increments the successful request counter.
 func (s *Server) RecordSuccess() {
 	s.Stats.SuccessfulRequests.Add(1)
 }
 
+// RecordFailure increments the failed request counter.
 func (s *Server) RecordFailure() {
 	s.Stats.FailedRequests.Add(1)
 }
 
+// Start registers HTTP routes and begins listening on the configured port.
 func (s *Server) Start() {
 	envConfig, err := env.LoadEnv()
 	if err != nil {
@@ -84,6 +96,7 @@ func (s *Server) Start() {
 	}
 }
 
+// AddNewRoom creates a room if it doesn't already exist.
 func (s *Server) AddNewRoom(roomId string) {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
@@ -102,6 +115,7 @@ func (s *Server) AddNewRoom(roomId string) {
 	}
 }
 
+// NewClient creates a Client with a buffered send channel.
 func NewClient(userId string, room *Room, conn *websocket.Conn, bufferSize int) *Client {
 	return &Client{
 		UserId: userId,
@@ -111,6 +125,8 @@ func NewClient(userId string, room *Room, conn *websocket.Conn, bufferSize int) 
 	}
 }
 
+// AddUserToRoom registers a user in a room, creating the room if needed.
+// Returns an error if the user is already present.
 func (s *Server) AddUserToRoom(userId string, roomId string, conn *websocket.Conn) (*Client, error) {
 	s.Mu.RLock()
 	room, exists := s.Rooms[roomId]
@@ -136,6 +152,7 @@ func (s *Server) AddUserToRoom(userId string, roomId string, conn *websocket.Con
 
 }
 
+// RemoveUserFromRoom removes a user from a room and closes its send channel.
 func (s *Server) RemoveUserFromRoom(userId string, roomId string) error {
 	s.Mu.RLock()
 	room, exists := s.Rooms[roomId]

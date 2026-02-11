@@ -1,3 +1,6 @@
+// Package client implements the ChatFlow load-testing client.
+// It generates concurrent users that join rooms, send messages,
+// and collect per-room latency and throughput statistics.
 package client
 
 import (
@@ -15,6 +18,7 @@ import (
 	"supriyakotturu.github.com/chatflow/pkg/utils"
 )
 
+// ConnElement groups a user's connection and pre-generated messages for one room.
 type ConnElement struct {
 	UserId   string
 	RoomId   string
@@ -22,6 +26,8 @@ type ConnElement struct {
 	Conn     *WsClient
 }
 
+// Client orchestrates the load test: connection pooling, message generation,
+// writing, reading, metrics collection, and stats aggregation.
 type Client struct {
 	Pool             *Pool
 	RoomIds          []string
@@ -38,6 +44,7 @@ type Client struct {
 	statsChan        chan *models.RoomStats
 }
 
+// ClientConfig holds the load test parameters.
 type ClientConfig struct {
 	PoolSize       int
 	UserCount      int
@@ -48,6 +55,7 @@ type ClientConfig struct {
 	LogMessages    bool
 }
 
+// NewClient initializes a Client with a connection pool, users, rooms, and optional CSV metrics.
 func NewClient(cf *ClientConfig) *Client {
 	e, err := env.LoadEnv()
 	if err != nil {
@@ -82,6 +90,8 @@ func NewClient(cf *ClientConfig) *Client {
 	return client
 }
 
+// GenerateConnElements creates a ConnElement per room for the given user
+// and sends each to the roomChan for processing.
 func (c *Client) GenerateConnElements(userId string) {
 	for _, roomId := range c.RoomIds {
 		userConn, err := c.Pool.GetOrCreateNewWsClient(userId, roomId)
@@ -112,6 +122,8 @@ func (c *Client) GenerateConnElements(userId string) {
 	}
 }
 
+// GenerateMessages spawns a goroutine per user to generate ConnElements
+// concurrently, then closes roomChan when all users are done.
 func (c *Client) GenerateMessages() {
 	defer close(c.roomChan)
 	var wg sync.WaitGroup
@@ -128,6 +140,9 @@ func (c *Client) GenerateMessages() {
 	wg.Wait()
 }
 
+// WriteMessages consumes ConnElements from roomChan. For each element it
+// starts a reader goroutine that collects latency stats, then writes all
+// messages to the server and waits for the reader to finish.
 func (c *Client) WriteMessages(ctx context.Context) {
 	for room := range c.roomChan {
 		c.Wg.Add(1)
@@ -219,13 +234,13 @@ func (c *Client) WriteMessages(ctx context.Context) {
 	}
 }
 
-// Writes metrics to the Metrics Chan
+// WriteMetricToChan sends a metric to the metrics channel for CSV recording.
 func (c *Client) WriteMetricToChan(timestamp string, messageType models.MessageType, latency int64, statusCode int, roomId string) {
 	metric := models.NewMetric(timestamp, messageType, latency, statusCode, roomId)
 	c.metricChan <- metric
 }
 
-// Collects the metrics in the CSV file (records/metrics.csv)
+// CollectMetrics drains metricChan and writes each metric to the CSV file.
 func (c *Client) CollectMetrics(ctx context.Context) {
 	for {
 		select {
@@ -240,11 +255,14 @@ func (c *Client) CollectMetrics(ctx context.Context) {
 	}
 }
 
+// CloseChannels closes metricChan and statsChan, unblocking any range loops.
 func (c *Client) CloseChannels() {
 	close(c.metricChan)
 	close(c.statsChan)
 }
 
+// GetOverAllStats drains statsChan and prints aggregate latency percentiles,
+// throughput, and per-room breakdowns with message type distribution.
 func (c *Client) GetOverAllStats() {
 	roomStatsMap := make(map[string][]*models.RoomStats)
 	allThroughputs := []float64{}

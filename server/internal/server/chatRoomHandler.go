@@ -8,6 +8,8 @@ import (
 	"supriyakotturu.github.com/chatflow/pkg/models"
 )
 
+// ChatRoomHandler upgrades an HTTP request to a WebSocket connection and
+// manages a user's lifecycle in a chat room: JOIN, TEXT messages, and LEAVE.
 func (s *Server) ChatRoomHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("ChatRoomHandler called for path: %s", r.URL.Path)
 	conn, err := WsUpgrader.Upgrade(w, r, nil)
@@ -91,6 +93,9 @@ func (s *Server) ChatRoomHandler(w http.ResponseWriter, r *http.Request) {
 	<-writeDone
 }
 
+// handleClientWrites drains the client's send channel and writes responses
+// to the WebSocket connection. It exits when the channel is closed or the
+// room context is cancelled.
 func (s *Server) handleClientWrites(client *Client) {
 	for {
 		select {
