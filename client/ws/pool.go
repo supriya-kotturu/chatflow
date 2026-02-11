@@ -1,42 +1,88 @@
 package client
 
-import "log"
+import (
+	"log"
+	"sync"
+
+	"github.com/gorilla/websocket"
+)
 
 type Pool struct {
-	clients chan *WsClient
-	all     []*WsClient
+	Port  string
+	Conns map[string]*WsClient
+	Sem   chan struct{}
+	Mu    sync.RWMutex
 }
 
-func NewWsClientPool(size int, port string) (*Pool, error) {
-	ch := make(chan *WsClient, size)
-	var all []*WsClient
-
-	for i := 0; i < size; i++ {
-		c, err := NewWsClient(port)
-		if err != nil {
-			// close connections what we already created
-			for _, cc := range all {
-				_ = cc.Close()
-			}
-			return nil, err
-		}
-		ch <- c
-		all = append(all, c)
+func NewWsClientPool(size int, port string) *Pool {
+	return &Pool{
+		Port:  port,
+		Conns: make(map[string]*WsClient),
+		Mu:    sync.RWMutex{},
+		Sem:   make(chan struct{}, size),
 	}
-	return &Pool{clients: ch, all: all}, nil
 }
 
-func (p *Pool) Get() *WsClient {
-	c := <-p.clients
-	c.Reset()
-	return c
-}
-func (p *Pool) Put(c *WsClient) { p.clients <- c }
 func (p *Pool) CloseAll() {
-	for _, c := range p.all {
-		if err := c.Close(); err != nil {
-			log.Panicln("close error: ", err)
-		}
+	p.Mu.Lock()
+	for k, c := range p.Conns {
+		_ = c.Close()
+		delete(p.Conns, k)
 	}
-	close(p.clients)
+	p.Mu.Unlock()
+}
+
+func (p *Pool) Remove(userId string, roomId string) {
+	p.Mu.Lock()
+
+	key := p.getKey(userId, roomId)
+	c, ok := p.Conns[key]
+	delete(p.Conns, key)
+	p.Mu.Unlock()
+
+	if ok {
+		c.Conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		_ = c.Close()
+		<-p.Sem
+	}
+}
+
+func (p *Pool) getKey(userId, roomId string) string {
+	return userId + ":" + roomId
+}
+
+func (p *Pool) GetOrCreateNewWsClient(userId string, roomId string) (*WsClient, error) {
+	key := p.getKey(userId, roomId)
+	p.Mu.RLock()
+
+	if conn, ok := p.Conns[key]; ok {
+		p.Mu.RUnlock()
+		log.Printf("Reusing existing connection for user %s in room %s", userId, roomId)
+		return conn, nil
+	}
+
+	p.Mu.RUnlock()
+	p.Sem <- struct{}{}
+
+	c, err := NewWsClient(1024, p.Port, roomId)
+
+	if err != nil {
+		<-p.Sem
+		return nil, err
+	}
+	c.OwnerUser = userId
+
+	p.Mu.Lock()
+	if existingConn, ok := p.Conns[key]; ok {
+		p.Mu.Unlock()
+		_ = c.Close()
+		<-p.Sem
+		return existingConn, nil
+	}
+
+	p.Conns[key] = c
+	p.Mu.Unlock()
+
+	return c, nil
 }
