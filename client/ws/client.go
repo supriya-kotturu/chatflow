@@ -229,7 +229,10 @@ func (c *Client) WriteMessages(ctx context.Context) {
 			for _, m := range room.Messages {
 				m.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
 				if err := room.Conn.Write(m); err != nil {
+					c.Pool.FailedMessages.Add(1)
 					log.Printf("User %s write to room %s error: %+v", room.UserId, room.RoomId, err)
+				} else {
+					c.Pool.SuccessfulMessages.Add(1)
 				}
 			}
 
@@ -263,6 +266,24 @@ func (c *Client) CollectMetrics(ctx context.Context) {
 func (c *Client) CloseChannels() {
 	close(c.metricChan)
 	close(c.statsChan)
+}
+
+// GetPerformanceMetricsSummary prints the summary of performance metrics
+func (c *Client) GetPerformanceMetricsSummary(wallTime time.Duration) {
+	successful := c.Pool.SuccessfulMessages.Load()
+	failed := c.Pool.FailedMessages.Load()
+	totalConns := c.Pool.TotalConnections.Load()
+	reconnections := c.Pool.Reconnections.Load()
+	failedConns := c.Pool.FailedConnections.Load()
+
+	fmt.Println("\n=== Performance Metrics ===")
+	fmt.Printf("Total runtime (wall time):  %.1fs\n", wallTime.Seconds())
+	fmt.Printf("Successful messages sent:   %d\n", successful)
+	fmt.Printf("Failed messages:            %d\n", failed)
+	fmt.Printf("Overall throughput:         %.1f msg/s\n", float64(successful)/wallTime.Seconds())
+	fmt.Printf("Total connections:          %d\n", totalConns)
+	fmt.Printf("Reconnections:              %d\n", reconnections)
+	fmt.Printf("Failed connections:         %d\n", failedConns)
 }
 
 // GetOverAllStats drains statsChan and prints aggregate latency percentiles,

@@ -20,6 +20,7 @@ type WsClient struct {
 	Send       chan *models.Response
 	WriteMu    sync.Mutex
 	OwnerUser  string
+	Retries    int
 }
 
 // NewWsClient dials a WebSocket connection to the given room with exponential
@@ -32,13 +33,15 @@ func NewWsClient(messageBuffer int, port string, roomId string) (*WsClient, erro
 	backoff := 1 * time.Second
 	var conn *websocket.Conn
 	var err error
+	retries := 0
 
 	for attempt := range maxRetries {
 		conn, _, err = dailer.Dial(chatRoomUrl.String(), nil)
 		if err == nil {
 			break
 		}
-		fmt.Printf("attempt %d failed: %v, retrying in %v...\n", attempt+1, err, backoff)
+		retries = attempt + 1
+		fmt.Printf("attempt %d failed: %v, retrying in %v...\n", retries, err, backoff)
 		time.Sleep(backoff)
 		backoff *= 2
 	}
@@ -51,6 +54,7 @@ func NewWsClient(messageBuffer int, port string, roomId string) (*WsClient, erro
 		ChatRoomId: roomId,
 		Conn:       conn,
 		Send:       make(chan *models.Response, messageBuffer),
+		Retries:    retries,
 	}
 
 	go c.Read()

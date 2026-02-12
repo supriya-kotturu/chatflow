@@ -3,9 +3,18 @@ package client
 import (
 	"log"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gorilla/websocket"
 )
+
+type PoolMetrics struct {
+	TotalConnections   atomic.Int64
+	Reconnections      atomic.Int64
+	FailedConnections  atomic.Int64
+	SuccessfulMessages atomic.Int64
+	FailedMessages     atomic.Int64
+}
 
 // Pool manages a bounded set of WebSocket connections keyed by "userId:roomId".
 // A semaphore limits the total number of concurrent connections.
@@ -14,6 +23,7 @@ type Pool struct {
 	Conns map[string]*WsClient
 	Sem   chan struct{}
 	Mu    sync.RWMutex
+	PoolMetrics
 }
 
 // NewWsClientPool creates a Pool with the given concurrency limit and server port.
@@ -49,6 +59,7 @@ func (p *Pool) Remove(userId string, roomId string) {
 		c.Conn.WriteMessage(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 		_ = c.Close()
+		close(c.Send)
 		<-p.Sem
 	}
 }
@@ -75,8 +86,13 @@ func (p *Pool) GetOrCreateNewWsClient(userId string, roomId string) (*WsClient, 
 	c, err := NewWsClient(1024, p.Port, roomId)
 
 	if err != nil {
+		p.FailedConnections.Add(1)
 		<-p.Sem
 		return nil, err
+	}
+	p.TotalConnections.Add(1)
+	if c.Retries > 5 {
+		p.Reconnections.Add(1)
 	}
 	c.OwnerUser = userId
 

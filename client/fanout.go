@@ -46,18 +46,21 @@ func RunFanOutLoadTest(config *client.ClientConfig) {
 
 				// Channel to signal when all messages are received
 				msgDone := make(chan struct{})
+				readerDone := make(chan struct{})
 				expectedMsgs := cf.MessageCount + 2 // JOIN + TEXT + LEAVE
 				receivedMsgs := 0
 
 				// Log the Response Messages sent from server
 				go func(room string, client *client.WsClient) {
+					defer close(readerDone)
 					defer func() {
 						if r := recover(); r != nil {
 							log.Printf("Reader goroutine panic: %v", r)
 						}
 					}()
-					for resp := range client.Send {
-						log.Printf("User %d in room %s received: %s | %s", userId, room, resp.MessageType, resp.Message.Message)
+
+					for _ = range client.Send {
+						// log.Printf("User %d in room %s received: %s | %s", userId, room, resp.MessageType, resp.Message.Message)
 						receivedMsgs++
 						if receivedMsgs >= expectedMsgs {
 							close(msgDone)
@@ -69,8 +72,11 @@ func RunFanOutLoadTest(config *client.ClientConfig) {
 				// Join room
 				joinMsg := generate.NewJoinMessage(strconv.Itoa(userId), roomId)
 				if err := c.Write(joinMsg); err != nil {
+					pool.FailedMessages.Add(1)
 					log.Printf("User %d join room %s error: %+v", userId, roomId, err)
 					continue
+				} else {
+					pool.SuccessfulMessages.Add(1)
 				}
 
 				// Send messages
@@ -82,7 +88,10 @@ func RunFanOutLoadTest(config *client.ClientConfig) {
 						m := generate.NewMessage(id)
 						m.Timestamp = time.Now().Format(time.RFC3339Nano)
 						if err := c.Write(m); err != nil {
+							pool.FailedMessages.Add(1)
 							log.Printf("User %s write to room %s error: %+v", id, roomId, err)
+						} else {
+							pool.SuccessfulMessages.Add(1)
 						}
 					}
 					doneCh <- struct{}{}
@@ -93,7 +102,10 @@ func RunFanOutLoadTest(config *client.ClientConfig) {
 				// Leave room
 				leaveMsg := generate.NewLeaveMessage(strconv.Itoa(userId), roomId)
 				if err := c.Write(leaveMsg); err != nil {
+					pool.FailedMessages.Add(1)
 					log.Printf("User %d leave room %s error: %+v", userId, roomId, err)
+				} else {
+					pool.SuccessfulMessages.Add(1)
 				}
 
 				// Wait for all messages to be received with timeout
@@ -108,14 +120,25 @@ func RunFanOutLoadTest(config *client.ClientConfig) {
 				}
 
 				cancel()
-				log.Printf("DONE: User %d in room %s timed out: %d/%d", userId, roomId, receivedMsgs, expectedMsgs)
-				// Close connection after timeout or completion
+				// Close connection and wait for reader to drain
 				pool.Remove(strconv.Itoa(userId), roomId)
+				<-readerDone
+				log.Printf("DONE: User %d in room %s: %d/%d received", userId, roomId, receivedMsgs, expectedMsgs)
 			}
 		}(uid, config)
 	}
 	wg.Wait()
-	log.Println("Closing connection...")
-	end := time.Since(start)
-	fmt.Printf("Total time: %.1fs\n", end.Seconds())
+	wallTime := time.Since(start)
+
+	successful := pool.SuccessfulMessages.Load()
+	failed := pool.FailedMessages.Load()
+
+	fmt.Println("\n=== Performance Metrics - Warm up ===")
+	fmt.Printf("Total runtime (wall time):  %.1fs\n", wallTime.Seconds())
+	fmt.Printf("Successful messages sent:   %d\n", successful)
+	fmt.Printf("Failed messages:            %d\n", failed)
+	fmt.Printf("Overall throughput:         %.1f msg/s\n", float64(successful)/wallTime.Seconds())
+	fmt.Printf("Total connections:          %d\n", pool.TotalConnections.Load())
+	fmt.Printf("Reconnections:              %d\n", pool.Reconnections.Load())
+	fmt.Printf("Failed connections:         %d\n", pool.FailedConnections.Load())
 }

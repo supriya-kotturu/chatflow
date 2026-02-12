@@ -27,15 +27,14 @@ func RunPipelineLoadTest(config *client.ClientConfig) {
 	c.WriteMessages(ctx)
 	c.Wg.Wait()
 
-	end := time.Since(start)
-	fmt.Printf("Total time: %.1fs\n", end.Seconds())
+	wallTime := time.Since(start)
 
 	c.CloseChannels()
+	c.GetPerformanceMetricsSummary(wallTime)
 	c.GetOverAllStats()
 
 	if c.CSVWriter != nil {
 		c.CSVWriter.Flush()
 		c.CSVWriter.Fd.Close()
-
 	}
 }
