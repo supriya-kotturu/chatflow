@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"supriyakotturu.github.com/chatflow/pkg/models"
@@ -20,6 +21,12 @@ type CSVWriter struct {
 
 // NewCSVWriter creates or truncates the given file and returns a CSVWriter.
 func NewCSVWriter(fileName string) (*CSVWriter, error) {
+	if dir := filepath.Dir(fileName); dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			log.Printf("Error creating directory %s: %+v", dir, err)
+			return nil, err
+		}
+	}
 	fd, err := os.Create(fileName)
 	if err != nil {
 		log.Printf("Error creating the file %s: %+v", fileName, err)

@@ -89,7 +89,7 @@ func (s *Server) Start() {
 	s.Mux.HandleFunc("/health", s.HealthHandler)
 	s.Mux.HandleFunc("/chat/{roomId}", s.ChatRoomHandler)
 
-	s.Mux.HandleFunc("GET /chat/{roomId}", s.ChatRoomPageHandler)
+	s.Mux.HandleFunc("GET /chat-room/{roomId}", s.ChatRoomPageHandler)
 
 	if err := http.ListenAndServe(*addr, s.Mux); err != nil {
 		fmt.Printf("Error starting the server: %+v\n", err)

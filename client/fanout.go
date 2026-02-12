@@ -1,5 +1,4 @@
-// Command client runs the ChatFlow load-testing client against the server.
-package main
+package client
 
 import (
 	"context"
@@ -14,9 +13,9 @@ import (
 	"supriyakotturu.github.com/chatflow/pkg/generate"
 )
 
-// ParallelMessages sends messages across all users and rooms concurrently,
-// with each user managing its own rooms in parallel.
-func ParallelMessages(config *client.ClientConfig) {
+// RunFanOutLoadTest runs a load test using the fan-out pattern: each user
+// goroutine directly manages its own rooms, connections, and message I/O.
+func RunFanOutLoadTest(config *client.ClientConfig) {
 	e, err := env.LoadEnv()
 	if err != nil {
 		log.Fatalf("Error loading environment variables: %+v", err)
@@ -27,7 +26,7 @@ func ParallelMessages(config *client.ClientConfig) {
 
 	var wg sync.WaitGroup
 
-	fmt.Println("Starting parallel messages...")
+	fmt.Println("Starting fan-out load test...")
 	start := time.Now()
 
 	for uid := 0; uid < config.UserCount; uid++ {
@@ -50,6 +49,7 @@ func ParallelMessages(config *client.ClientConfig) {
 				expectedMsgs := cf.MessageCount + 2 // JOIN + TEXT + LEAVE
 				receivedMsgs := 0
 
+				// Log the Response Messages sent from server
 				go func(room string, client *client.WsClient) {
 					defer func() {
 						if r := recover(); r != nil {
@@ -57,7 +57,7 @@ func ParallelMessages(config *client.ClientConfig) {
 						}
 					}()
 					for resp := range client.Send {
-						log.Printf("User %d in room %s received: %s | %s", userId, room, resp.Message.MessageType, resp.Message.Message)
+						log.Printf("User %d in room %s received: %s | %s", userId, room, resp.MessageType, resp.Message.Message)
 						receivedMsgs++
 						if receivedMsgs >= expectedMsgs {
 							close(msgDone)
@@ -80,6 +80,7 @@ func ParallelMessages(config *client.ClientConfig) {
 					for i := 0; i < cf.MessageCount; i++ {
 						id := strconv.Itoa(userId)
 						m := generate.NewMessage(id)
+						m.Timestamp = time.Now().Format(time.RFC3339Nano)
 						if err := c.Write(m); err != nil {
 							log.Printf("User %s write to room %s error: %+v", id, roomId, err)
 						}
@@ -88,6 +89,7 @@ func ParallelMessages(config *client.ClientConfig) {
 				}(doneCh)
 
 				<-doneCh
+
 				// Leave room
 				leaveMsg := generate.NewLeaveMessage(strconv.Itoa(userId), roomId)
 				if err := c.Write(leaveMsg); err != nil {
@@ -115,50 +117,5 @@ func ParallelMessages(config *client.ClientConfig) {
 	wg.Wait()
 	log.Println("Closing connection...")
 	end := time.Since(start)
-	fmt.Println("Total time: ", end.Seconds())
-}
-
-// SequentialMessages generates connections via a channel pipeline, writes
-// messages, collects metrics, and prints aggregate stats on completion.
-func SequentialMessages(config *client.ClientConfig) {
-	c := client.NewClient(config)
-	defer c.Pool.CloseAll()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	start := time.Now()
-
-	fmt.Println("Starting sequential messages...")
-
-	go c.GenerateMessages()
-	go c.CollectMetrics(ctx)
-	c.WriteMessages(ctx)
-	c.Wg.Wait()
-
-	end := time.Since(start)
-	fmt.Println("Total time: ", end.Seconds())
-
-	c.CloseChannels()
-	c.GetOverAllStats()
-
-	if c.CSVWriter != nil {
-		c.CSVWriter.Flush()
-		c.CSVWriter.Fd.Close()
-
-	}
-}
-
-func main() {
-	config := &client.ClientConfig{
-		PoolSize:       320, // total concurrent sessions: 32 * 10 [Allows one user to parallelly join 10 rooms]
-		UserCount:      32,
-		MessageCount:   1000,
-		RoomCount:      10,
-		MessageBuffer:  1250,
-		CollectMetrics: true,
-	}
-
-	// ParallelMessages(config) //30.3093569
-	SequentialMessages(config) //30.0860449
+	fmt.Printf("Total time: %.1fs\n", end.Seconds())
 }

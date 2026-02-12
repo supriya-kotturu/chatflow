@@ -57,13 +57,7 @@ func NewMessage(userId string, username string, message string, messageType Mess
 
 // validateUserId validates the user ID field.
 func (m *Message) validateUserId(errorMap map[string]string) {
-	segments := strings.Split(m.UserId, "-")
-	userId := segments[1]
-
-	if m.UserId == "" {
-		errorMap["UserId"] = "UserId cannot be empty"
-	}
-	if id, err := strconv.Atoi(userId); err != nil || id < minUserId || id > maxUserId {
+	if id, err := strconv.Atoi(m.UserId); err != nil || id < minUserId || id > maxUserId {
 		if err != nil {
 			errorMap["UserId"] = "UserId must be a valid integer"
 		} else if id < minUserId {
@@ -136,7 +130,6 @@ func (m *Message) Validate() error {
 	m.validateUserId(errorMap)
 	m.validateUsername(errorMap)
 	m.validateMessageType(errorMap)
-	m.validateTimestamp(errorMap)
 
 	if m.MessageType == MessageTypeText {
 		m.validateMessage(errorMap)

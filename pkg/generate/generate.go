@@ -119,11 +119,11 @@ func NewRooms(size int) []string {
 	return rooms
 }
 
-// NewUsers returns a slice of user IDs in the form "usr-1", "usr-2", etc.
+// NewUsers returns a slice of user IDs in the form "1", "2", etc.
 func NewUsers(size int) []string {
 	users := make([]string, size)
 	for idx := range users {
-		users[idx] = fmt.Sprintf("usr-%d", idx+1)
+		users[idx] = fmt.Sprintf("%d", idx+1)
 	}
 	return users
 }
