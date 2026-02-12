@@ -9,8 +9,9 @@ import (
 
 // Env holds application configuration loaded from environment variables.
 type Env struct {
-	Name string
-	Port string
+	Name       string
+	Port       string
+	ServerHost string
 }
 
 // LoadEnv reads the .env file (parent dir first, then cwd) and returns
@@ -26,7 +27,8 @@ func LoadEnv() (*Env, error) {
 	}
 
 	return &Env{
-		Name: os.Getenv("NAME"),
-		Port: os.Getenv("PORT"),
+		Name:       os.Getenv("NAME"),
+		Port:       os.Getenv("PORT"),
+		ServerHost: os.Getenv("SERVER_HOST"),
 	}, nil
 }

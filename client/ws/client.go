@@ -65,7 +65,7 @@ func NewClient(cf *ClientConfig) *Client {
 	if err != nil {
 		log.Fatalf("Error loading the environment variables: %+v", err)
 	}
-	pool := NewWsClientPool(cf.PoolSize, e.Port)
+	pool := NewWsClientPool(cf.PoolSize, e.ServerHost, e.Port)
 
 	client := &Client{
 		Pool:     pool,

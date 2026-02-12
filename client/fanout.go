@@ -21,7 +21,7 @@ func RunFanOutLoadTest(config *client.ClientConfig) {
 		log.Fatalf("Error loading environment variables: %+v", err)
 	}
 
-	pool := client.NewWsClientPool(config.PoolSize, e.Port)
+	pool := client.NewWsClientPool(config.PoolSize, e.ServerHost, e.Port)
 	defer pool.CloseAll()
 
 	var wg sync.WaitGroup

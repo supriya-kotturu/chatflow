@@ -25,8 +25,8 @@ type WsClient struct {
 
 // NewWsClient dials a WebSocket connection to the given room with exponential
 // backoff retry and starts a background reader goroutine.
-func NewWsClient(messageBuffer int, port string, roomId string) (*WsClient, error) {
-	chatRoomUrl := url.URL{Scheme: "ws", Host: "localhost:" + port, Path: "/chat/" + roomId}
+func NewWsClient(messageBuffer int, host string, port string, roomId string) (*WsClient, error) {
+	chatRoomUrl := url.URL{Scheme: "ws", Host: host + port, Path: "/chat/" + roomId}
 	dailer := websocket.DefaultDialer
 
 	maxRetries := 5
