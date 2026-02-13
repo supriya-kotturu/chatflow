@@ -272,7 +272,9 @@ func (c *Client) CollectMetrics(ctx context.Context) {
 
 // CloseChannels closes metricChan and statsChan, unblocking any range loops.
 func (c *Client) CloseChannels() {
-	close(c.metricChan)
+	if c.metricChan != nil {
+		close(c.metricChan)
+	}
 	close(c.statsChan)
 }
 

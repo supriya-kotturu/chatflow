@@ -7,6 +7,13 @@ import (
 
 func main() {
 	configs := []*clientWs.ClientConfig{
+		{
+			PoolSize:      1,
+			UserCount:     1,
+			MessageCount:  1,
+			RoomCount:     1,
+			MessageBuffer: 1,
+		},
 		// 500K: 50 × (500+2) × 20 = 502,000 messages
 		{
 			PoolSize:       1000,
