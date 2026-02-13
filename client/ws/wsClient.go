@@ -21,13 +21,16 @@ type WsClient struct {
 	WriteMu    sync.Mutex
 	OwnerUser  string
 	Retries    int
+	closeOnce  sync.Once
 }
 
 // NewWsClient dials a WebSocket connection to the given room with exponential
 // backoff retry and starts a background reader goroutine.
 func NewWsClient(messageBuffer int, host string, port string, roomId string) (*WsClient, error) {
-	chatRoomUrl := url.URL{Scheme: "ws", Host: host + port, Path: "/chat/" + roomId}
-	dailer := websocket.DefaultDialer
+	addr := net.JoinHostPort(host, port)
+	chatRoomPath := "/chat/"
+	chatRoomUrl := url.URL{Scheme: "ws", Host: addr, Path: chatRoomPath + roomId}
+	dialer := websocket.DefaultDialer
 
 	maxRetries := 5
 	backoff := 1 * time.Second
@@ -35,9 +38,10 @@ func NewWsClient(messageBuffer int, host string, port string, roomId string) (*W
 	var err error
 	retries := 0
 
-	for attempt := range maxRetries {
-		conn, _, err = dailer.Dial(chatRoomUrl.String(), nil)
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		conn, _, err = dialer.Dial(chatRoomUrl.String(), nil)
 		if err == nil {
+			retries = attempt
 			break
 		}
 		retries = attempt + 1
@@ -77,22 +81,23 @@ func (c *WsClient) Write(m *models.Message) error {
 	return c.Conn.WriteJSON(m)
 }
 
+// CloseSend safely closes the Send channel exactly once.
+func (c *WsClient) CloseSend() {
+	c.closeOnce.Do(func() { close(c.Send) })
+}
+
 // Read continuously reads responses from the server and forwards them to Send.
-// It silently exits on connection close or network errors.
+// It closes Send when the connection is lost so readers know no more data is coming.
 func (c *WsClient) Read() {
+	defer c.CloseSend()
 	for {
 		var msg models.Response
 		if err := c.Conn.ReadJSON(&msg); err != nil {
-			// to avoid logging interruption errors (e.g using ctrl+c to terminate the client)
-			// ERR: 2026/01/30 01:31:54 read error: read tcp [::1]:56499->[::1]:3000: use of closed network connection
 			if errors.Is(err, net.ErrClosed) || websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				return
 			}
 			return
 		}
-		select {
-		case c.Send <- &msg:
-		default:
-		}
+		c.Send <- &msg
 	}
 }

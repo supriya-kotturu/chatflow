@@ -3,6 +3,7 @@ package env
 
 import (
 	"os"
+	"strings"
 
 	"github.com/lpernett/godotenv"
 )
@@ -26,9 +27,20 @@ func LoadEnv() (*Env, error) {
 		}
 	}
 
+	host := os.Getenv("SERVER_HOST")
+	port := os.Getenv("PORT")
+
+	host = strings.TrimSpace(host)
+	host = strings.TrimPrefix(host, "http://")
+	host = strings.TrimPrefix(host, "https://")
+	host = strings.TrimSuffix(host, "/")
+
+	port = strings.TrimSpace(port)
+	port = strings.TrimPrefix(port, ":")
+
 	return &Env{
 		Name:       os.Getenv("NAME"),
-		Port:       os.Getenv("PORT"),
-		ServerHost: os.Getenv("SERVER_HOST"),
+		ServerHost: host,
+		Port:       port,
 	}, nil
 }

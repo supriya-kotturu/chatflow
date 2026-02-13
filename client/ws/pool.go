@@ -61,7 +61,7 @@ func (p *Pool) Remove(userId string, roomId string) {
 		c.Conn.WriteMessage(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 		_ = c.Close()
-		close(c.Send)
+		c.CloseSend()
 		<-p.Sem
 	}
 }
@@ -85,7 +85,7 @@ func (p *Pool) GetOrCreateNewWsClient(userId string, roomId string) (*WsClient, 
 	p.Mu.RUnlock()
 	p.Sem <- struct{}{}
 
-	c, err := NewWsClient(1024, p.Port, p.ServerHost, roomId)
+	c, err := NewWsClient(1024, p.ServerHost, p.Port, roomId)
 
 	if err != nil {
 		p.FailedConnections.Add(1)

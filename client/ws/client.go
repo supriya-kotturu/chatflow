@@ -356,12 +356,12 @@ func (c *Client) GetOverAllStats() {
 		for _, l := range roomLatencies {
 			totalRoomLatency += l
 		}
-		fmt.Printf("Room %s | users: %d | throughput: %.1f msg/s | mean latency: %dms | median latency: %dms\n",
+		fmt.Printf("\nRoom %s | users: %d | throughput: %.1f msg/s | mean latency: %dms | median latency: %dms\n",
 			roomId, rn, roomThroughput, totalRoomLatency/int64(rn), roomLatencies[rn/2])
 
-		fmt.Println("Message Type Distribution: ")
+		fmt.Printf("Message Type Distribution: ")
 		for mt, count := range totalMsgTypes {
-			fmt.Printf("  %s: %d\n", mt, count)
+			fmt.Printf("  %s: %d |", mt, count)
 		}
 	}
 }

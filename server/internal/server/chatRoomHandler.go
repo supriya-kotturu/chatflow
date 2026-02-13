@@ -74,11 +74,7 @@ func (s *Server) ChatRoomHandler(w http.ResponseWriter, r *http.Request) {
 
 		switch msg.MessageType {
 		case models.MessageTypeText:
-			select {
-			case client.Send <- resp:
-			default:
-				log.Printf("Send buffer full for user %s in room %s", userId, roomId)
-			}
+			client.Send <- resp
 			s.RecordSuccess()
 		case models.MessageTypeLeave:
 			client.Send <- resp

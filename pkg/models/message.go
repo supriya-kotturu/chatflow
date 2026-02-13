@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // MessageType represents the type of message being sent.
@@ -92,7 +93,7 @@ func (m *Message) validateMessage(errorMap map[string]string) {
 
 // validateTimestamp validates the timestamp field.
 func (m *Message) validateTimestamp(errorMap map[string]string) {
-	if m.Timestamp == "" {
+	if _, err := time.Parse(time.RFC3339Nano, m.Timestamp); err != nil {
 		errorMap["Timestamp"] = "Timestamp cannot be empty"
 	}
 }
@@ -130,6 +131,7 @@ func (m *Message) Validate() error {
 	m.validateUserId(errorMap)
 	m.validateUsername(errorMap)
 	m.validateMessageType(errorMap)
+	m.validateTimestamp(errorMap)
 
 	if m.MessageType == MessageTypeText {
 		m.validateMessage(errorMap)
