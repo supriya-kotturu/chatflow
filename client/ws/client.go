@@ -156,9 +156,9 @@ func (c *Client) WriteMessages(ctx context.Context) {
 			defer c.Pool.Remove(room.UserId, room.RoomId)
 
 			// Read messages sent from the server
-			done := make(chan struct{})
+			readDone := make(chan struct{})
 			go func() {
-				defer close(done)
+				defer close(readDone)
 				expected := len(room.Messages)
 				received := 0
 				var totalLatency int64
@@ -244,7 +244,7 @@ func (c *Client) WriteMessages(ctx context.Context) {
 				}
 			}
 
-			<-done
+			<-readDone
 		}(room)
 	}
 }
