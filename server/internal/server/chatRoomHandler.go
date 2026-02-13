@@ -22,7 +22,7 @@ func (s *Server) ChatRoomHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// Send JOIN message
+	// Read JOIN message
 	var joinMsg models.Message
 	if err := conn.ReadJSON(&joinMsg); err != nil {
 		s.RecordFailure()
