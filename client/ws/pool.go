@@ -93,7 +93,7 @@ func (p *Pool) GetOrCreateNewWsClient(userId string, roomId string) (*WsClient, 
 		return nil, err
 	}
 	p.TotalConnections.Add(1)
-	if c.Retries > 5 {
+	if c.Retries > 2 {
 		p.Reconnections.Add(1)
 	}
 	c.OwnerUser = userId

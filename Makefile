@@ -10,7 +10,7 @@ build: build-server build-client1 build-client2
 build-server:
 	@mkdir -p $(BINARY_DIR)/server/html
 	go build -o $(SERVER_BIN) ./server
-	cp -r server/html/* $(SERVER_BIN)/html/
+	cp -r server/html/* $(BINARY_DIR)/server/html/
 
 build-client1:
 	@mkdir -p $(BINARY_DIR)

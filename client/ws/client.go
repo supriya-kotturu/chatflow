@@ -166,10 +166,37 @@ func (c *Client) WriteMessages(ctx context.Context) {
 				startTime := time.Now()
 				messageTypes := make(map[models.MessageType]int)
 
+				sendStats := func() {
+					n := len(latencies)
+					if n == 0 {
+						return
+					}
+					sort.Slice(latencies, func(i, j int) bool {
+						return latencies[i] < latencies[j]
+					})
+					stats := &models.RoomStats{
+						RoomId:              room.RoomId,
+						UserId:              room.UserId,
+						MessageCount:        received,
+						MeanLatency:         totalLatency / int64(n),
+						MedianLatency:       latencies[n/2],
+						Percentile95Latency: latencies[int(float64(n)*0.95)],
+						Percentile99Latency: latencies[int(float64(n)*0.99)],
+						MinLatency:          latencies[0],
+						MaxLatency:          latencies[n-1],
+						ThroughPut:          float64(n) / time.Since(startTime).Seconds(),
+						MessageTypes:        messageTypes,
+					}
+					c.statsChan <- stats
+					// log.Printf("User %s in room %s avg latency: %dms (%d/%d received)",
+					// 	room.UserId, room.RoomId, totalLatency/int64(n), received, expected)
+				}
+
 				for received < expected {
 					select {
 					case resp, ok := <-room.Conn.Send:
 						if !ok {
+							sendStats()
 							return
 						}
 
@@ -194,32 +221,13 @@ func (c *Client) WriteMessages(ctx context.Context) {
 						totalLatency += latency
 
 						if received >= expected {
-							sort.Slice(latencies, func(i, j int) bool {
-								return latencies[i] < latencies[j]
-							})
-							n := len(latencies)
-							stats := &models.RoomStats{
-								RoomId:              room.RoomId,
-								UserId:              room.UserId,
-								MessageCount:        expected,
-								MeanLatency:         (totalLatency) / int64(n),
-								MedianLatency:       (latencies[n/2]),
-								Percentile95Latency: (latencies[int(float64(n)*0.95)]),
-								Percentile99Latency: (latencies[int(float64(n)*0.99)]),
-								MinLatency:          latencies[0],
-								MaxLatency:          latencies[n-1],
-								ThroughPut:          float64(n) / time.Since(startTime).Seconds(),
-								MessageTypes:        messageTypes,
-							}
-							c.statsChan <- stats
-
-							log.Printf("User %s in room %s avg latency: %dms (%d/%d received)",
-								room.UserId, room.RoomId, totalLatency/int64(n), received, expected)
+							sendStats()
 							return
 						}
 					case <-ctx.Done():
 						log.Printf("User %s in room %s timed out: %d/%d",
 							room.UserId, room.RoomId, received, expected)
+						sendStats()
 						return
 					}
 				}
@@ -359,9 +367,10 @@ func (c *Client) GetOverAllStats() {
 		fmt.Printf("\nRoom %s | users: %d | throughput: %.1f msg/s | mean latency: %dms | median latency: %dms\n",
 			roomId, rn, roomThroughput, totalRoomLatency/int64(rn), roomLatencies[rn/2])
 
-		fmt.Printf("Message Type Distribution: ")
+		fmt.Printf("  Message Types: ")
 		for mt, count := range totalMsgTypes {
-			fmt.Printf("  %s: %d |", mt, count)
+			fmt.Printf("%s: %d  ", mt, count)
 		}
+		fmt.Println()
 	}
 }
