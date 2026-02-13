@@ -10,7 +10,11 @@ import (
 func (s *Server) ChatRoomPageHandler(w http.ResponseWriter, r *http.Request) {
 	roomId := r.PathValue("roomId")
 	tmplPath := filepath.Join("server", "html", "index.html")
-	tmpl := template.Must(template.ParseFiles(tmplPath))
+	tmpl, err := template.ParseFiles(tmplPath)
+	if err != nil {
+		http.Error(w, "Template not found", http.StatusInternalServerError)
+		return
+	}
 
 	data := map[string]string{
 		"Title": "Chat Room " + roomId,

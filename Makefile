@@ -8,8 +8,9 @@ CLIENT2_BIN := $(BINARY_DIR)/client-pipeline
 build: build-server build-client1 build-client2
 
 build-server:
-	@mkdir -p $(BINARY_DIR)
+	@mkdir -p $(BINARY_DIR)/server/html
 	go build -o $(SERVER_BIN) ./server
+	cp -r server/html/* $(SERVER_BIN)/html/
 
 build-client1:
 	@mkdir -p $(BINARY_DIR)
@@ -29,7 +30,7 @@ vet:
 	go vet ./...
 
 run-server: build-server
-	./$(SERVER_BIN)
+	cd $(BINARY_DIR) && ./chat-server
 
 run-client1: build-client1
 	./$(CLIENT1_BIN)
