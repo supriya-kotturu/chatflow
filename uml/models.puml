@@ -1,0 +1,68 @@
+@startuml
+namespace models {
+    class "Message" << (S,Aquamarine) >> {
+        + UserId string
+        + Username string
+        + Message string
+        + Timestamp string
+        + MessageType MessageType
+
+        - validateUserId(errorMap <font color=blue>map</font>[string]string) 
+        - validateUsername(errorMap <font color=blue>map</font>[string]string) 
+        - validateMessage(errorMap <font color=blue>map</font>[string]string) 
+        - validateTimestamp(errorMap <font color=blue>map</font>[string]string) 
+        - validateMessageType(errorMap <font color=blue>map</font>[string]string) 
+
+        + Validate() error
+
+    }
+    class "MessageType" << (S,Aquamarine) >> {
+        + String() string
+
+    }
+    class "Metric" << (S,Aquamarine) >> {
+        + Timestamp string
+        + MessageType MessageType
+        + Latency int64
+        + StatusCode int
+        + RoomId string
+
+        + String() []string
+
+    }
+    class "Response" << (S,Aquamarine) >> {
+        + ServerTimestamp string
+        + Status int
+        + Error string
+        + Data any
+
+    }
+    class "RoomStats" << (S,Aquamarine) >> {
+        + RoomId string
+        + UserId string
+        + MessageCount int
+        + MeanLatency int64
+        + MedianLatency int64
+        + Percentile95Latency int64
+        + Percentile99Latency int64
+        + MinLatency int64
+        + MaxLatency int64
+        + ThroughPut float64
+        + MessageTypes <font color=blue>map</font>[MessageType]int
+
+    }
+    class "ValidationError" << (S,Aquamarine) >> {
+        + Errors <font color=blue>map</font>[string]string
+
+        + Error() string
+
+    }
+    class "models.MessageType" << (T, #FF7700) >>  {
+    }
+}
+"__builtin__.string" #.. "models.MessageType"
+"models.Message" *-- "models.Response"
+
+
+
+@enduml

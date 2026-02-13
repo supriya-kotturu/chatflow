@@ -1,0 +1,49 @@
+@startuml
+namespace server {
+    class "Client" << (S,Aquamarine) >> {
+        + Conn *websocket.Conn
+        + Send <font color=blue>chan</font> *models.Response
+        + Room *Room
+        + UserId string
+
+    }
+    class "Room" << (S,Aquamarine) >> {
+        + ID string
+        + Users <font color=blue>map</font>[string]*Client
+        + Broadcast <font color=blue>chan</font> []byte
+        + Ctx context.Context
+        + Cancel context.CancelFunc
+        + Mu sync.RWMutex
+
+    }
+    class "Server" << (S,Aquamarine) >> {
+        + BufferSize int
+        + Mux *http.ServeMux
+        + Rooms <font color=blue>map</font>[string]*Room
+        + Mu sync.RWMutex
+
+        - handleClientWrites(client *Client) 
+
+        + ChatRoomHandler(w http.ResponseWriter, r *http.Request) 
+        + ChatRoomPageHandler(w http.ResponseWriter, r *http.Request) 
+        + HealthHandler(w http.ResponseWriter, r *http.Request) 
+        + HomeHandler(w http.ResponseWriter, r *http.Request) 
+        + RecordSuccess() 
+        + RecordFailure() 
+        + Start() 
+        + AddNewRoom(roomId string) 
+        + AddUserToRoom(userId string, roomId string, conn *websocket.Conn) (*Client, error)
+        + RemoveUserFromRoom(userId string, roomId string) error
+
+    }
+    class "Stats" << (S,Aquamarine) >> {
+        + SuccessfulRequests atomic.Int64
+        + FailedRequests atomic.Int64
+
+    }
+}
+"server.Stats" *-- "server.Server"
+
+
+
+@enduml

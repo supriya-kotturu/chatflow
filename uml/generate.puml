@@ -1,0 +1,15 @@
+@startuml
+namespace env {
+    class "Env" << (S,Aquamarine) >> {
+        + Name string
+        + Port string
+        + ServerHost string
+
+    }
+}
+namespace generate {
+}
+
+
+
+@enduml
