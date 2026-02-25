@@ -64,6 +64,16 @@ func main() {
 			CollectMetrics: true,
 			OutputFolder:   "results/2_5M",
 		},
+		// 3.5M: 175 × (1000+2) × 20 = 3,507,000 messages
+		{
+			PoolSize:       3500,
+			UserCount:      175,
+			MessageCount:   1000,
+			RoomCount:      20,
+			MessageBuffer:  3500,
+			CollectMetrics: true,
+			OutputFolder:   "results/3_5M",
+		},
 	}
 
 	for _, cfg := range configs {
