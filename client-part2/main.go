@@ -2,11 +2,11 @@ package main
 
 import (
 	"supriyakotturu.github.com/chatflow/client"
-	clientWs "supriyakotturu.github.com/chatflow/client/ws"
+	ws "supriyakotturu.github.com/chatflow/client/ws"
 )
 
 func main() {
-	configs := []*clientWs.ClientConfig{
+	configs := []*ws.ClientConfig{
 		{
 			PoolSize:      1,
 			UserCount:     1,

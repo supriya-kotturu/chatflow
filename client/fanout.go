@@ -8,20 +8,20 @@ import (
 	"sync"
 	"time"
 
-	client "supriyakotturu.github.com/chatflow/client/ws"
+	ws "supriyakotturu.github.com/chatflow/client/ws"
 	"supriyakotturu.github.com/chatflow/pkg/env"
 	"supriyakotturu.github.com/chatflow/pkg/generate"
 )
 
 // RunFanOutLoadTest runs a load test using the fan-out pattern: each user
 // goroutine directly manages its own rooms, connections, and message I/O.
-func RunFanOutLoadTest(config *client.ClientConfig) {
+func RunFanOutLoadTest(config *ws.ClientConfig) {
 	e, err := env.LoadEnv()
 	if err != nil {
 		log.Fatalf("Error loading environment variables: %+v", err)
 	}
 
-	pool := client.NewWsClientPool(config.PoolSize, e.ServerHost, e.Port)
+	pool := ws.NewWsClientPool(config.PoolSize, e.ServerHost, e.Port)
 	defer pool.CloseAll()
 
 	var wg sync.WaitGroup
@@ -31,7 +31,7 @@ func RunFanOutLoadTest(config *client.ClientConfig) {
 
 	for uid := 0; uid < config.UserCount; uid++ {
 		wg.Add(1)
-		go func(userId int, cf *client.ClientConfig) {
+		go func(userId int, cf *ws.ClientConfig) {
 			defer wg.Done()
 
 			// Same user joins multiple rooms
@@ -51,7 +51,7 @@ func RunFanOutLoadTest(config *client.ClientConfig) {
 				receivedMsgs := 0
 
 				// Log the Response Messages sent from server
-				go func(room string, client *client.WsClient) {
+				go func(room string, conn *ws.WsClient) {
 					defer close(readerDone)
 					defer func() {
 						if r := recover(); r != nil {
@@ -59,7 +59,7 @@ func RunFanOutLoadTest(config *client.ClientConfig) {
 						}
 					}()
 
-					for _ = range client.Send {
+					for _ = range conn.Send {
 						// log.Printf("User %d in room %s received: %s | %s", userId, room, resp.MessageType, resp.Message.Message)
 						receivedMsgs++
 						if receivedMsgs >= expectedMsgs {

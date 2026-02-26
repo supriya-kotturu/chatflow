@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"time"
 
-	client "supriyakotturu.github.com/chatflow/client/ws"
+	ws "supriyakotturu.github.com/chatflow/client/ws"
 )
 
 // RunPipelineLoadTest runs a load test using the pipeline pattern: connections
 // are produced into a channel, consumed by writer goroutines, and metrics are
 // collected to CSV with aggregate stats printed on completion.
-func RunPipelineLoadTest(config *client.ClientConfig) {
-	c := client.NewClient(config)
+func RunPipelineLoadTest(config *ws.ClientConfig) {
+	c := ws.NewClient(config)
 	defer c.Pool.CloseAll()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)

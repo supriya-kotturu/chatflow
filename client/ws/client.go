@@ -1,7 +1,7 @@
-// Package client implements the ChatFlow load-testing client.
+// Package ws implements the ChatFlow load-testing client.
 // It generates concurrent users that join rooms, send messages,
 // and collect per-room latency and throughput statistics.
-package client
+package ws
 
 import (
 	"context"
