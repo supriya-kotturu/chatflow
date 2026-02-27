@@ -74,12 +74,12 @@ func (s *Server) RecordFailure() {
 
 // Start registers HTTP routes and begins listening on the configured port.
 func (s *Server) Start() {
-	envConfig, err := env.LoadEnv()
+	e, err := env.LoadServerEnv()
 	if err != nil {
 		fmt.Printf("Error loading the .env file: %+v\n", err)
 		os.Exit(1)
 	}
-	var addr = flag.String("addr", ":"+envConfig.Port, "http service address")
+	var addr = flag.String("addr", ":"+e.Port, "http service address")
 
 	// Serve static files
 	fileServer := http.FileServer(http.Dir("server/html/"))

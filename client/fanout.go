@@ -16,7 +16,7 @@ import (
 // RunFanOutLoadTest runs a load test using the fan-out pattern: each user
 // goroutine directly manages its own rooms, connections, and message I/O.
 func RunFanOutLoadTest(config *ws.ClientConfig) {
-	e, err := env.LoadEnv()
+	e, err := env.LoadServerEnv()
 	if err != nil {
 		log.Fatalf("Error loading environment variables: %+v", err)
 	}
@@ -59,7 +59,7 @@ func RunFanOutLoadTest(config *ws.ClientConfig) {
 						}
 					}()
 
-					for _ = range conn.Send {
+					for range conn.Send {
 						// log.Printf("User %d in room %s received: %s | %s", userId, room, resp.MessageType, resp.Message.Message)
 						receivedMsgs++
 						if receivedMsgs >= expectedMsgs {

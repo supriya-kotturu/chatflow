@@ -62,7 +62,7 @@ type ClientConfig struct {
 
 // NewClient initializes a Client with a connection pool, users, rooms, and optional CSV metrics.
 func NewClient(cf *ClientConfig) *Client {
-	e, err := env.LoadEnv()
+	e, err := env.LoadServerEnv()
 	fileName := "metrics.csv"
 
 	if err != nil {
