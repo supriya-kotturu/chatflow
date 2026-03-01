@@ -3,7 +3,9 @@ package internal
 import (
 	"log"
 	"net/http"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"supriyakotturu.github.com/chatflow/pkg/models"
 )
@@ -12,6 +14,7 @@ import (
 // manages a user's lifecycle in a chat room: JOIN, TEXT messages, and LEAVE.
 func (s *Server) ChatRoomHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("ChatRoomHandler called for path: %s", r.URL.Path)
+	clientIp := r.RemoteAddr
 	conn, err := WsUpgrader.Upgrade(w, r, nil)
 	roomId := r.PathValue("roomId")
 
@@ -53,7 +56,9 @@ func (s *Server) ChatRoomHandler(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Echo JOIN response
-	client.Send <- models.NewResponse(joinMsg)
+	resp := models.NewResponse(joinMsg)
+
+	s.broadcastAndPublish(client, resp, clientIp)
 	s.RecordSuccess()
 
 	// Read Loop
@@ -66,6 +71,13 @@ func (s *Server) ChatRoomHandler(w http.ResponseWriter, r *http.Request) {
 				s.RecordFailure()
 				log.Printf("Error reading from client %s: %v", userId, err)
 			}
+
+			// Synthetic LEAVE message to notify other users when the connection is dropped.
+			msg := models.NewMessage(userId, resp.Username, "", models.MessageTypeLeave)
+			resp := models.NewResponse(*msg)
+			resp.ServerTimestamp = time.Now().UTC().Format(time.RFC3339Nano)
+
+			s.broadcastAndPublish(client, resp, clientIp)
 			s.RemoveUserFromRoom(userId, roomId)
 			break
 		}
@@ -73,11 +85,13 @@ func (s *Server) ChatRoomHandler(w http.ResponseWriter, r *http.Request) {
 		resp := models.NewResponse(msg)
 
 		switch msg.MessageType {
+		case models.MessageTypeJoin:
+			// Ignore subsequent JOIN messages
 		case models.MessageTypeText:
-			client.Send <- resp
+			s.broadcastAndPublish(client, resp, clientIp)
 			s.RecordSuccess()
 		case models.MessageTypeLeave:
-			client.Send <- resp
+			s.broadcastAndPublish(client, resp, clientIp)
 			s.RemoveUserFromRoom(userId, roomId)
 			s.RecordSuccess()
 			<-writeDone
@@ -108,5 +122,32 @@ func (s *Server) handleClientWrites(client *Client) {
 			log.Println("Room context cancelled, closing client connection")
 			return
 		}
+	}
+}
+
+// broadcastAndPublish fans out resp to all local room users via the broadcast
+// channel and publishes a QueueMessage to RabbitMQ for cross-server delivery.
+// The broadcast send is non-blocking; messages are dropped if the channel is full.
+func (s *Server) broadcastAndPublish(client *Client, resp *models.Response, clientIp string) {
+	select {
+	case client.Room.Broadcast <- resp:
+	default:
+		log.Printf("Dropping message for room [%s] due to full broadcast channel\n", client.Room.ID)
+	}
+
+	id := uuid.NewString()
+	qMessage := &models.QueueMessage{
+		MessageId:   id,
+		RoomId:      client.Room.ID,
+		Username:    resp.Username,
+		Message:     resp.Message,
+		Timestamp:   time.Now().UTC().Format(time.RFC3339Nano),
+		MessageType: resp.MessageType,
+		ServerId:    s.Rabbit.ServerID(),
+		ClientIp:    clientIp,
+	}
+
+	if err := s.Rabbit.Publish(client.Room.ID, qMessage); err != nil {
+		log.Printf("Error publishing message [%s] to RabbitMQ: %v", id, err)
 	}
 }

@@ -5,6 +5,7 @@ package internal
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -16,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 	"supriyakotturu.github.com/chatflow/pkg/env"
 	"supriyakotturu.github.com/chatflow/pkg/models"
+	rmq "supriyakotturu.github.com/chatflow/pkg/rabbitmq"
 )
 
 // Stats tracks request success and failure counts using atomic counters.
@@ -27,17 +29,18 @@ type Stats struct {
 // Client represents a single user's WebSocket connection within a room.
 // Each client owns exactly one connection — no mutex is needed for writes.
 type Client struct {
-	Conn   *websocket.Conn
-	Send   chan *models.Response
-	Room   *Room
-	UserId string
+	Conn      *websocket.Conn
+	Send      chan *models.Response
+	Room      *Room
+	UserId    string
+	closeOnce sync.Once
 }
 
 // Room represents a chat room containing connected users.
 type Room struct {
 	ID        string
 	Users     map[string]*Client
-	Broadcast chan []byte
+	Broadcast chan *models.Response
 	Ctx       context.Context
 	Cancel    context.CancelFunc
 	Mu        sync.RWMutex
@@ -45,20 +48,36 @@ type Room struct {
 
 // Server is the central hub that manages rooms, routes, and request stats.
 type Server struct {
+	ID         string
+	Ctx        context.Context
 	BufferSize int
 	Mux        *http.ServeMux
 	Rooms      map[string]*Room
+	Rabbit     rmq.RabbitMQServer
 	Mu         sync.RWMutex
+	maxRooms   int
 	Stats
 }
 
+// ServerConfig is the config struct to create a ChatServerMux
+type ServerConfig struct {
+	Id         string
+	Ctx        context.Context
+	Rabbit     rmq.RabbitMQServer
+	BufferSize int
+}
+
 // NewServerMux creates a Server with the given per-client send buffer size.
-func NewServerMux(bufferSize int) *Server {
+func NewServerMux(cf *ServerConfig) *Server {
 	return &Server{
-		BufferSize: bufferSize,
+		ID:         cf.Id,
+		Ctx:        cf.Ctx,
+		Rabbit:     cf.Rabbit,
+		BufferSize: cf.BufferSize,
 		Mux:        http.NewServeMux(),
 		Rooms:      make(map[string]*Room),
 		Mu:         sync.RWMutex{},
+		maxRooms:   20,
 	}
 }
 
@@ -96,7 +115,9 @@ func (s *Server) Start() {
 	}
 }
 
-// AddNewRoom creates a room if it doesn't already exist.
+// AddNewRoom creates a room and starts its infrastructure: a RabbitMQ consumer
+// for cross-server messages and a broadcast goroutine that fans out to local clients.
+// It is a no-op if the room already exists.
 func (s *Server) AddNewRoom(roomId string) {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
@@ -106,13 +127,81 @@ func (s *Server) AddNewRoom(roomId string) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s.Rooms[roomId] = &Room{
+	room := &Room{
 		ID:        roomId,
 		Users:     make(map[string]*Client),
-		Broadcast: make(chan []byte),
+		Broadcast: make(chan *models.Response, s.BufferSize*s.maxRooms),
 		Ctx:       ctx,
 		Cancel:    cancel,
 	}
+
+	// consumeMessages handles messages published by other servers.
+	// It skips messages originating from this server (self-filter) and
+	// forwards the rest into the room's broadcast channel for local fan-out.
+	consumeMessages := func(msg []byte) {
+		var queueMsg models.QueueMessage
+		if err := json.Unmarshal(msg, &queueMsg); err != nil {
+			log.Printf("Error un-marshalling message from RabbitMQ: %+v\n", err)
+			return
+		}
+
+		if queueMsg.ServerId == s.ID {
+			return
+		}
+
+		message := models.NewResponse(queueMsg.Message)
+		message.ServerTimestamp = queueMsg.Timestamp
+		select {
+		case room.Broadcast <- message:
+		default:
+			log.Printf("Dropping message for room [%s] due to full broadcast channel\n", roomId)
+		}
+	}
+
+	if err := s.Rabbit.Consume(s.Ctx, roomId, consumeMessages); err != nil {
+		log.Printf("Error consuming messages for room [%s]: %+v\n", roomId, err)
+	}
+
+	// broadcast goroutine fans out each message to a snapshot of connected clients.
+	// On room shutdown (ctx cancel), it closes all client Send channels.
+	go func(r *Room) {
+		for {
+			sendChans := make([]chan *models.Response, 0)
+			select {
+			case resp, ok := <-r.Broadcast:
+				if !ok {
+					log.Println("Unable to read the message from Broadcast channel.")
+					return
+				}
+				r.Mu.RLock()
+				for _, u := range r.Users {
+					sendChans = append(sendChans, u.Send)
+				}
+				r.Mu.RUnlock()
+
+				// Broadcast the response to all the users in the room.
+				for _, conn := range sendChans {
+					select {
+					case conn <- resp:
+					default:
+					}
+				}
+
+			case <-r.Ctx.Done():
+				log.Println("Room context cancelled, closing client connection")
+
+				// Close the user channels if the Room's ctx is cancelled.
+				r.Mu.Lock()
+				for _, user := range r.Users {
+					user.closeOnce.Do(func() { close(user.Send) })
+				}
+				r.Mu.Unlock()
+				return
+			}
+		}
+	}(room)
+
+	s.Rooms[roomId] = room
 }
 
 // NewClient creates a Client with a buffered send channel.
@@ -172,7 +261,7 @@ func (s *Server) RemoveUserFromRoom(userId string, roomId string) error {
 	}
 
 	// Close the Send channel when user explicitly leaves
-	close(client.Send)
+	client.closeOnce.Do(func() { close(client.Send) })
 	delete(room.Users, userId)
 	log.Printf("User %s left room %s", userId, roomId)
 	return nil
