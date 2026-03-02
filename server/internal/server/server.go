@@ -32,7 +32,7 @@ type Client struct {
 	Conn      *websocket.Conn
 	Send      chan *models.Response
 	Room      *Room
-	UserId    string
+	UserID    string
 	closeOnce sync.Once
 }
 
@@ -65,6 +65,7 @@ type ServerConfig struct {
 	Ctx        context.Context
 	Rabbit     rmq.RabbitMQServer
 	BufferSize int
+	MaxRooms   int
 }
 
 // NewServerMux creates a Server with the given per-client send buffer size.
@@ -77,7 +78,7 @@ func NewServerMux(cf *ServerConfig) *Server {
 		Mux:        http.NewServeMux(),
 		Rooms:      make(map[string]*Room),
 		Mu:         sync.RWMutex{},
-		maxRooms:   20,
+		maxRooms:   cf.MaxRooms,
 	}
 }
 
@@ -145,7 +146,7 @@ func (s *Server) AddNewRoom(roomId string) {
 			return
 		}
 
-		if queueMsg.ServerId == s.ID {
+		if queueMsg.ServerID == s.ID {
 			return
 		}
 
@@ -207,7 +208,7 @@ func (s *Server) AddNewRoom(roomId string) {
 // NewClient creates a Client with a buffered send channel.
 func NewClient(userId string, room *Room, conn *websocket.Conn, bufferSize int) *Client {
 	return &Client{
-		UserId: userId,
+		UserID: userId,
 		Conn:   conn,
 		Send:   make(chan *models.Response, bufferSize),
 		Room:   room,

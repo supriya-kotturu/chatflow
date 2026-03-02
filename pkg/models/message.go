@@ -13,8 +13,8 @@ import (
 type MessageType string
 
 const (
-	minUserId         = 1
-	maxUserId         = 100000
+	minUserID         = 1
+	maxUserID         = 100000
 	minUsernameLength = 3
 	maxUsernameLength = 20
 	minMessageLength  = 1
@@ -38,7 +38,7 @@ func (t MessageType) String() string {
 
 // Message represents a chat message with all required fields.
 type Message struct {
-	UserId      string      `json:"userId"`
+	UserID      string      `json:"userId"`
 	Username    string      `json:"username"`
 	Message     string      `json:"message"`
 	Timestamp   string      `json:"timestamp"`
@@ -49,22 +49,22 @@ type Message struct {
 // It automatically sets the current timestamp.
 func NewMessage(userId string, username string, message string, messageType MessageType) *Message {
 	return &Message{
-		UserId:      userId,
+		UserID:      userId,
 		Username:    username,
 		Message:     message,
 		MessageType: messageType,
 	}
 }
 
-// validateUserId validates the user ID field.
-func (m *Message) validateUserId(errorMap map[string]string) {
-	if id, err := strconv.Atoi(m.UserId); err != nil || id < minUserId || id > maxUserId {
+// validateUserID validates the user ID field.
+func (m *Message) validateUserID(errorMap map[string]string) {
+	if id, err := strconv.Atoi(m.UserID); err != nil || id < minUserID || id > maxUserID {
 		if err != nil {
-			errorMap["UserId"] = "UserId must be a valid integer"
-		} else if id < minUserId {
-			errorMap["UserId"] = fmt.Sprintf("UserId must be greater than %d", minUserId)
-		} else if id > maxUserId {
-			errorMap["UserId"] = fmt.Sprintf("UserId must be less than %d", maxUserId)
+			errorMap["UserID"] = "UserID must be a valid integer"
+		} else if id < minUserID {
+			errorMap["UserID"] = fmt.Sprintf("UserID must be greater than %d", minUserID)
+		} else if id > maxUserID {
+			errorMap["UserID"] = fmt.Sprintf("UserID must be less than %d", maxUserID)
 		}
 	}
 }
@@ -128,7 +128,7 @@ func (m *Message) Validate() error {
 
 	errorMap := make(map[string]string)
 
-	m.validateUserId(errorMap)
+	m.validateUserID(errorMap)
 	m.validateUsername(errorMap)
 	m.validateMessageType(errorMap)
 	m.validateTimestamp(errorMap)

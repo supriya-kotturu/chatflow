@@ -3,8 +3,8 @@ package models
 // RoomStats holds aggregated latency and throughput statistics for one
 // user's session in a room. All latency values are in milliseconds.
 type RoomStats struct {
-	RoomId              string
-	UserId              string
+	RoomID              string
+	UserID              string
 	MessageCount        int
 	MeanLatency         int64
 	MedianLatency       int64

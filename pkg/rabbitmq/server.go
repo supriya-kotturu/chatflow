@@ -20,7 +20,7 @@ type RabbitMQServer interface {
 //	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 //	defer cancel()
 //
-//	rabbit, err := rabbitmq.NewRabbitMQ(ctx, serverID, bufferSize, roomCount)
+//	rabbit, err := rabbitmq.NewRabbitMQ(ctx, serverID, bufferSize)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}

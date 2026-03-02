@@ -63,8 +63,8 @@ var messages []string = []string{
 	"What do you call a group of disorganized cats? A cat-astrophe!",
 }
 
-// UserId returns a random numeric user ID between 1 and 100000.
-func UserId() string {
+// UserID returns a random numeric user ID between 1 and 100000.
+func UserID() string {
 	return strconv.Itoa(rand.Intn(100000) + 1)
 }
 
@@ -79,8 +79,8 @@ func Message() string {
 	return strconv.Itoa(idx) + "--" + messages[idx]
 }
 
-// ChatRoomId returns a random room ID between 1 and 20.
-func ChatRoomId() string {
+// ChatRoomID returns a random room ID between 1 and 20.
+func ChatRoomID() string {
 	return strconv.Itoa(rand.Intn(20) + 1)
 }
 
@@ -110,7 +110,7 @@ func NewRooms(size int) []string {
 	seen := make(map[string]struct{})
 	rooms := make([]string, 0, size)
 	for len(rooms) < size {
-		id := ChatRoomId()
+		id := ChatRoomID()
 		if _, ok := seen[id]; !ok {
 			seen[id] = struct{}{}
 			rooms = append(rooms, id)

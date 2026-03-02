@@ -3,6 +3,7 @@ package env
 
 import (
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/lpernett/godotenv"
@@ -22,6 +23,15 @@ type RabbitEnv struct {
 	RabbitPort     string
 	RabbitUser     string
 	RabbitPassword string
+	RoomCount      int
+}
+
+// atoiWithDefault converts a string to an integer, returning a default value if conversion fails.
+func atoiWithDefault(s string, defaultValue int) int {
+	if val, err := strconv.Atoi(s); err == nil {
+		return val
+	}
+	return defaultValue
 }
 
 // LoadEnvFromFile reads the .env file (parent dir first, then cwd) and returns
@@ -77,11 +87,13 @@ func LoadRabbitEnv() (*RabbitEnv, error) {
 	rabbitPort := os.Getenv("RABBIT_PORT")
 	rabbitUser := os.Getenv("RABBIT_USER")
 	rabbitPassword := os.Getenv("RABBIT_PASSWORD")
+	roomCount := os.Getenv("ROOM_COUNT")
 
 	return &RabbitEnv{
 		RabbitHost:     rabbitHost,
 		RabbitPort:     rabbitPort,
 		RabbitUser:     rabbitUser,
 		RabbitPassword: rabbitPassword,
+		RoomCount:      atoiWithDefault(roomCount, 20),
 	}, nil
 }

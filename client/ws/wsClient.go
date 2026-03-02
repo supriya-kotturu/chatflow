@@ -15,7 +15,7 @@ import (
 // WsClient wraps a single WebSocket connection to a chat room.
 // It owns a reader goroutine that pushes responses into Send.
 type WsClient struct {
-	ChatRoomId string
+	ChatRoomID string
 	Conn       *websocket.Conn
 	Send       chan *models.Response
 	WriteMu    sync.Mutex
@@ -55,7 +55,7 @@ func NewWsClient(messageBuffer int, host string, port string, roomId string) (*W
 	}
 
 	c := &WsClient{
-		ChatRoomId: roomId,
+		ChatRoomID: roomId,
 		Conn:       conn,
 		Send:       make(chan *models.Response, messageBuffer),
 		Retries:    retries,

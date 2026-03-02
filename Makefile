@@ -20,6 +20,12 @@ build-client2:
 	@mkdir -p $(BINARY_DIR)
 	go build -o $(CLIENT2_BIN) ./client-part2
 
+build-rabbitmq:
+	@mkdir -p $(BINARY_DIR)
+	go build -o $(BINARY_DIR)/rabbitmq ./rabbitmq
+
+build-all: build build-rabbitmq build-server build-client1 build-client2
+
 test:
 	go test ./...
 
@@ -37,6 +43,9 @@ run-client1: build-client1
 
 run-client2: build-client2
 	./$(CLIENT2_BIN)
+
+run-rabbitmq: build-rabbitmq
+	./$(BINARY_DIR)/rabbitmq
 
 clean:
 	rm -rf $(BINARY_DIR)

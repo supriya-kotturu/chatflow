@@ -48,9 +48,9 @@ type Rabbit struct {
 }
 
 // NewRabbitMQ connects to RabbitMQ, declares a topic exchange, and creates
-// per-server auto-delete queues for each room (0..roomCount-1). It also starts
+// per-server auto-delete queues for each room (0..ROOM_COUNT-1). It also starts
 // a goroutine that watches connection state changes to drive the circuit breaker.
-func NewRabbitMQ(ctx context.Context, serverId string, size int, roomCount int) (*Rabbit, error) {
+func NewRabbitMQ(ctx context.Context, serverId string, size int) (*Rabbit, error) {
 	e, err := env.LoadRabbitEnv()
 	if err != nil {
 		return nil, err
@@ -64,6 +64,7 @@ func NewRabbitMQ(ctx context.Context, serverId string, size int, roomCount int) 
 	addr := net.JoinHostPort(e.RabbitHost, e.RabbitPort)
 	rmqUrl := url.URL{Scheme: "amqp", User: user, Host: addr, Path: "/"}
 	consumers := make(map[string]*rmq.Consumer)
+	roomCount := e.RoomCount
 
 	// Create a RabbitMQ Connection
 	environment := rmq.NewEnvironment(rmqUrl.String(), nil)

@@ -40,7 +40,7 @@ func (s *Server) ChatRoomHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Register User in Room
-	userId := joinMsg.UserId
+	userId := joinMsg.UserID
 	client, err := s.AddUserToRoom(userId, roomId, conn)
 	if err != nil {
 		s.RecordFailure()
@@ -137,13 +137,13 @@ func (s *Server) broadcastAndPublish(client *Client, resp *models.Response, clie
 
 	id := uuid.NewString()
 	qMessage := &models.QueueMessage{
-		MessageId:   id,
-		RoomId:      client.Room.ID,
+		MessageID:   id,
+		RoomID:      client.Room.ID,
 		Username:    resp.Username,
 		Message:     resp.Message,
 		Timestamp:   time.Now().UTC().Format(time.RFC3339Nano),
 		MessageType: resp.MessageType,
-		ServerId:    s.Rabbit.ServerID(),
+		ServerID:    s.Rabbit.ServerID(),
 		ClientIp:    clientIp,
 	}
 

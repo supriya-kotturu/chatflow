@@ -8,6 +8,7 @@ import (
 	"os/signal"
 
 	"github.com/google/uuid"
+	"supriyakotturu.github.com/chatflow/pkg/env"
 	rabbitmq "supriyakotturu.github.com/chatflow/server/internal/rabbitmq"
 	server "supriyakotturu.github.com/chatflow/server/internal/server"
 )
@@ -18,10 +19,14 @@ func main() {
 
 	serverId := uuid.NewString()
 	bufferSize := 2048
-	roomCount := 20
 
-	rabbit, err := rabbitmq.NewRabbitMQ(ctx, serverId, bufferSize, roomCount)
+	e, err := env.LoadRabbitEnv()
+	if err != nil {
+		log.Println("Error loading env: ", err)
+		return
+	}
 
+	rabbit, err := rabbitmq.NewRabbitMQ(ctx, serverId, bufferSize)
 	if err != nil {
 		log.Println("Error connecting to rabbitMQ: ", err)
 		return
@@ -32,6 +37,7 @@ func main() {
 		Id:         serverId,
 		Ctx:        ctx,
 		Rabbit:     rabbit,
+		MaxRooms:   e.RoomCount,
 	}
 	s := server.NewServerMux(config)
 	s.Start()
