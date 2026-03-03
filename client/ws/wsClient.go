@@ -3,6 +3,7 @@ package ws
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"sync"
@@ -98,6 +99,11 @@ func (c *WsClient) Read() {
 			}
 			return
 		}
-		c.Send <- &msg
+		select {
+		case c.Send <- &msg:
+		default:
+			log.Printf("Dropping message for room [%s] due to full Send channel\n", c.ChatRoomID)
+		}
+
 	}
 }

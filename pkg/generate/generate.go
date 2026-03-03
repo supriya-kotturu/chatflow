@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
+	"time"
 
 	"supriyakotturu.github.com/chatflow/pkg/models"
 )
@@ -79,21 +80,28 @@ func Message() string {
 	return strconv.Itoa(idx) + "--" + messages[idx]
 }
 
-// ChatRoomID returns a random room ID between 1 and 20.
+// TotalRooms is the size of the room ID space used by ChatRoomID.
+const TotalRooms = 20
+
+// ChatRoomID returns a random room ID between 1 and TotalRooms.
 func ChatRoomID() string {
-	return strconv.Itoa(rand.Intn(20) + 1)
+	return strconv.Itoa(rand.Intn(TotalRooms) + 1)
 }
 
 // NewJoinMessage creates a JOIN message for the given user and room.
 func NewJoinMessage(userId string, chatRoom string) *models.Message {
 	username := Username(userId)
-	return models.NewMessage(userId, username, "", models.MessageTypeJoin)
+	msg := models.NewMessage(userId, username, "", models.MessageTypeJoin)
+	msg.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
+	return msg
 }
 
 // NewLeaveMessage creates a LEAVE message for the given user and room.
 func NewLeaveMessage(userId string, chatRoom string) *models.Message {
 	username := Username(userId)
-	return models.NewMessage(userId, username, "", models.MessageTypeLeave)
+	msg := models.NewMessage(userId, username, "", models.MessageTypeLeave)
+	msg.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
+	return msg
 }
 
 // NewMessage creates a TEXT message with a random body for the given user.

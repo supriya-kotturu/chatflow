@@ -19,22 +19,24 @@ type PoolMetrics struct {
 // Pool manages a bounded set of WebSocket connections keyed by "userId:roomId".
 // A semaphore limits the total number of concurrent connections.
 type Pool struct {
-	Conns      map[string]*WsClient
-	Sem        chan struct{}
-	Mu         sync.RWMutex
-	ServerHost string
-	Port       string
+	Conns         map[string]*WsClient
+	Sem           chan struct{}
+	Mu            sync.RWMutex
+	ServerHost    string
+	Port          string
+	MessageBuffer int
 	PoolMetrics
 }
 
-// NewWsClientPool creates a Pool with the given concurrency limit and server port.
-func NewWsClientPool(size int, serverHost string, port string) *Pool {
+// NewWsClientPool creates a Pool with the given concurrency limit, server port, and per-connection send buffer size.
+func NewWsClientPool(size int, serverHost string, port string, messageBuffer int) *Pool {
 	return &Pool{
-		Port:       port,
-		ServerHost: serverHost,
-		Conns:      make(map[string]*WsClient),
-		Mu:         sync.RWMutex{},
-		Sem:        make(chan struct{}, size),
+		Port:          port,
+		ServerHost:    serverHost,
+		Conns:         make(map[string]*WsClient),
+		Mu:            sync.RWMutex{},
+		Sem:           make(chan struct{}, size),
+		MessageBuffer: messageBuffer,
 	}
 }
 
@@ -61,7 +63,6 @@ func (p *Pool) Remove(userId string, roomId string) {
 		c.Conn.WriteMessage(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 		_ = c.Close()
-		c.CloseSend()
 		<-p.Sem
 	}
 }
@@ -85,7 +86,7 @@ func (p *Pool) GetOrCreateNewWsClient(userId string, roomId string) (*WsClient, 
 	p.Mu.RUnlock()
 	p.Sem <- struct{}{}
 
-	c, err := NewWsClient(1024, p.ServerHost, p.Port, roomId)
+	c, err := NewWsClient(p.MessageBuffer, p.ServerHost, p.Port, roomId)
 
 	if err != nil {
 		p.FailedConnections.Add(1)

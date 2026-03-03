@@ -34,23 +34,28 @@ const (
 	CircuitOpen      CircuitState = 2 // connection lost or buffer full, drop messages
 )
 
-// Rabbit manages a single AMQP connection with a shared publisher and
+// Rabbit manages a single AMQP connection with per-worker publishers and
 // per-room consumers, plus a circuit breaker for connection failures.
 type Rabbit struct {
-	serverID      string
-	exchangeName  string
-	tempBuffer    chan *pendingMessage
-	conn          *rmq.AmqpConnection
-	consumers     map[string]*rmq.Consumer
-	publisher     *rmq.Publisher
-	circuitStatus atomic.Int32
-	stateChanged  chan *rmq.StateChanged
+	serverID        string
+	exchangeName    string
+	tempBuffer      chan *pendingMessage // secondary buffer used during reconnection
+	publishChan     chan *pendingMessage // primary async publish queue
+	conn            *rmq.AmqpConnection
+	consumers       map[string]*rmq.Consumer
+	circuitStatus   atomic.Int32
+	stateChanged    chan *rmq.StateChanged
+	droppedMessages atomic.Int64
 }
 
 // NewRabbitMQ connects to RabbitMQ, declares a topic exchange, and creates
-// per-server auto-delete queues for each room (0..ROOM_COUNT-1). It also starts
+// per-server auto-delete queues for each room (1..ROOM_COUNT). It also starts
 // a goroutine that watches connection state changes to drive the circuit breaker.
-func NewRabbitMQ(ctx context.Context, serverId string, size int) (*Rabbit, error) {
+//
+// tempBufferSize is the circuit-breaker secondary buffer (small, ~2048).
+// publishChanSize is the primary async publish queue — size it to absorb the
+// peak burst of incoming messages, e.g. UserCount * MessageCount * RoomsPerUser.
+func NewRabbitMQ(ctx context.Context, serverId string, tempBufferSize int, publishChanSize int) (*Rabbit, error) {
 	e, err := env.LoadRabbitEnv()
 	if err != nil {
 		return nil, err
@@ -89,8 +94,10 @@ func NewRabbitMQ(ctx context.Context, serverId string, size int) (*Rabbit, error
 		return nil, err
 	}
 
-	// Bind Routing Keys with their respective Binding Keys
-	for r := range roomCount {
+	// Bind Routing Keys with their respective Binding Keys.
+	// Client generates room IDs "1".."roomCount" (rand.Intn(N)+1), so
+	// consumers must cover that same range: 1..roomCount inclusive.
+	for r := 1; r <= roomCount; r++ {
 		queueName := fmt.Sprintf("room.%d.%s", r, serverId)
 		queue := &rmq.ClassicQueueSpecification{
 			Name:         queueName,
@@ -121,22 +128,27 @@ func NewRabbitMQ(ctx context.Context, serverId string, size int) (*Rabbit, error
 		consumers[bindingKey] = consumer
 	}
 
-	// Create a Publisher
-	publisher, err := conn.NewPublisher(ctx, nil, nil)
-
-	if err != nil {
-		rmq.Error("Error creating publisher", err)
-		return nil, err
-	}
-
 	rabbit := &Rabbit{
 		serverID:     serverId,
 		exchangeName: exchangeName,
-		tempBuffer:   make(chan *pendingMessage, size),
+		tempBuffer:   make(chan *pendingMessage, tempBufferSize),
+		publishChan:  make(chan *pendingMessage, publishChanSize),
 		conn:         conn,
 		stateChanged: stateChanged,
-		publisher:    publisher,
 		consumers:    consumers,
+	}
+
+	// Start publish worker goroutines, each with its own dedicated publisher
+	// (sender link). This gives each worker independent AMQP flow control and
+	// avoids serialisation on a shared publisher's internal state.
+	const numPublishWorkers = 12
+	for range numPublishWorkers {
+		pub, err := conn.NewPublisher(ctx, nil, nil)
+		if err != nil {
+			rmq.Error("Error creating publisher for worker", err)
+			return nil, err
+		}
+		go rabbit.publishWorker(ctx, pub)
 	}
 
 	// Watch for RabbitMQ state changes
@@ -183,13 +195,42 @@ func (r *Rabbit) ServerID() string {
 	return r.serverID
 }
 
-// Publish sends a QueueMessage to the topic exchange under routing key "room.{roomId}".
-// Behavior depends on circuit state: publish directly when closed, buffer when
-// reconnecting, or return an error when open (connection lost or buffer full).
-func (r *Rabbit) Publish(roomId string, message *models.QueueMessage) error {
-	currentCircuitStatus := r.circuitStatus.Load()
+// DroppedMessages returns the total number of messages dropped because the
+// publish channel was full (i.e. cross-server delivery was lost for these).
+func (r *Rabbit) DroppedMessages() int64 {
+	return r.droppedMessages.Load()
+}
 
-	switch CircuitState(currentCircuitStatus) {
+// Publish enqueues a message for async delivery. It returns immediately;
+// the actual AMQP I/O is handled by the background publishWorker goroutines.
+func (r *Rabbit) Publish(roomId string, message *models.QueueMessage) error {
+	select {
+	case r.publishChan <- &pendingMessage{roomId: roomId, message: message}:
+		return nil
+	default:
+		r.droppedMessages.Add(1)
+		return fmt.Errorf("publish channel full, dropping message for room %s", roomId)
+	}
+}
+
+// publishWorker drains publishChan and calls publishDirect for each message.
+// Each worker owns its own publisher to avoid serialisation on shared state.
+// It exits when ctx is cancelled.
+func (r *Rabbit) publishWorker(ctx context.Context, publisher *rmq.Publisher) {
+	for {
+		select {
+		case pm := <-r.publishChan:
+			r.publishDirect(ctx, publisher, pm.roomId, pm.message)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// publishDirect performs the actual AMQP publish with circuit-breaker logic.
+// Called only from publishWorker goroutines.
+func (r *Rabbit) publishDirect(ctx context.Context, publisher *rmq.Publisher, roomId string, message *models.QueueMessage) {
+	switch CircuitState(r.circuitStatus.Load()) {
 	case CircuitClosed:
 		routingKey := fmt.Sprintf("room.%s", roomId)
 		exchangeAddress := &rmq.ExchangeAddress{
@@ -200,39 +241,33 @@ func (r *Rabbit) Publish(roomId string, message *models.QueueMessage) error {
 		marshalledMsg, err := json.Marshal(message)
 		if err != nil {
 			rmq.Error("Error marshalling message", err)
-			return err
+			return
 		}
 
-		msg, err := rmq.NewMessageWithAddress([]byte(marshalledMsg), exchangeAddress)
+		msg, err := rmq.NewMessageWithAddress(marshalledMsg, exchangeAddress)
 		if err != nil {
 			rmq.Error("Error creating message with address", err)
-			return err
+			return
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		_, err = r.publisher.Publish(ctx, msg)
+		pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_, err = publisher.Publish(pubCtx, msg)
+		cancel()
 		if err != nil {
 			rmq.Error("Error publishing message", err)
-			return err
 		}
-		return nil
+
 	case CircuitBuffering:
 		select {
-		case r.tempBuffer <- &pendingMessage{
-			roomId:  roomId,
-			message: message,
-		}:
+		case r.tempBuffer <- &pendingMessage{roomId: roomId, message: message}:
 		default:
 			r.circuitStatus.Store(int32(CircuitOpen))
-			return fmt.Errorf("buffer is full, cannot publish message")
+			rmq.Error("Buffer full, dropping message for room", roomId)
 		}
-	case CircuitOpen:
-		return fmt.Errorf("circuit is open, cannot publish message")
-	}
 
-	return nil
+	case CircuitOpen:
+		rmq.Error("Circuit open, dropping message for room", roomId)
+	}
 }
 
 // Consume starts a goroutine that receives messages from the room's queue and

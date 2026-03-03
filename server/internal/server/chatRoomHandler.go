@@ -78,7 +78,9 @@ func (s *Server) ChatRoomHandler(w http.ResponseWriter, r *http.Request) {
 			resp.ServerTimestamp = time.Now().UTC().Format(time.RFC3339Nano)
 
 			s.broadcastAndPublish(client, resp, clientIp)
-			s.RemoveUserFromRoom(userId, roomId)
+			// Schedule in-order removal: the remove event is enqueued after the
+			// synthetic LEAVE in Broadcast, so other users see the LEAVE first.
+			s.scheduleRemoveUser(client)
 			break
 		}
 
@@ -92,7 +94,10 @@ func (s *Server) ChatRoomHandler(w http.ResponseWriter, r *http.Request) {
 			s.RecordSuccess()
 		case models.MessageTypeLeave:
 			s.broadcastAndPublish(client, resp, clientIp)
-			s.RemoveUserFromRoom(userId, roomId)
+			// Schedule in-order removal: the remove event sits after the LEAVE
+			// response in Broadcast. The broadcast goroutine will fan out M999,
+			// M1000, and the LEAVE before closing this client's Send channel.
+			s.scheduleRemoveUser(client)
 			s.RecordSuccess()
 			<-writeDone
 			return
@@ -130,7 +135,7 @@ func (s *Server) handleClientWrites(client *Client) {
 // The broadcast send is non-blocking; messages are dropped if the channel is full.
 func (s *Server) broadcastAndPublish(client *Client, resp *models.Response, clientIp string) {
 	select {
-	case client.Room.Broadcast <- resp:
+	case client.Room.Broadcast <- roomEvent{resp: resp}:
 	default:
 		log.Printf("Dropping message for room [%s] due to full broadcast channel\n", client.Room.ID)
 	}
@@ -149,5 +154,19 @@ func (s *Server) broadcastAndPublish(client *Client, resp *models.Response, clie
 
 	if err := s.Rabbit.Publish(client.Room.ID, qMessage); err != nil {
 		log.Printf("Error publishing message [%s] to RabbitMQ: %v", id, err)
+	}
+}
+
+// scheduleRemoveUser enqueues a user-removal event into the room's Broadcast
+// channel. Because Broadcast is FIFO, the removal is guaranteed to be processed
+// only after all messages already queued ahead of it — eliminating the race
+// where the last few messages are skipped for the leaving user.
+// Falls back to direct removal if the channel is unexpectedly full.
+func (s *Server) scheduleRemoveUser(client *Client) {
+	select {
+	case client.Room.Broadcast <- roomEvent{removeUserId: client.UserID}:
+	default:
+		log.Printf("Broadcast full during leave for user %s, removing directly", client.UserID)
+		s.RemoveUserFromRoom(client.UserID, client.Room.ID)
 	}
 }

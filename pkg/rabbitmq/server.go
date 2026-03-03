@@ -10,6 +10,7 @@ type RabbitMQServer interface {
 	Publish(roomId string, message *models.QueueMessage) error
 	Consume(ctx context.Context, roomId string, handler func([]byte)) error
 	ServerID() string
+	DroppedMessages() int64
 }
 
 // RabbitMQServer is the interface that callers depend on for message fan-out.
