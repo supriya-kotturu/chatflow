@@ -7,7 +7,7 @@ import (
 )
 
 type RabbitMQServer interface {
-	Publish(roomId string, message *models.QueueMessage) error
+	Publish(ctx context.Context, roomId string, message *models.QueueMessage) error
 	Consume(ctx context.Context, roomId string, handler func([]byte)) error
 	ServerID() string
 	DroppedMessages() int64

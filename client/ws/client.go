@@ -58,13 +58,12 @@ type ClientConfig struct {
 	CollectMetrics bool
 	LogMessages    bool
 	OutputFolder   string
+	OutputFile     string // if set, used directly as the CSV path instead of OutputFolder/metrics.csv
 }
 
 // NewClient initializes a Client with a connection pool, users, rooms, and optional CSV metrics.
 func NewClient(cf *ClientConfig) *Client {
 	e, err := env.LoadServerEnv()
-	fileName := "metrics.csv"
-
 	if err != nil {
 		log.Fatalf("Error loading the environment variables: %+v", err)
 	}
@@ -80,7 +79,11 @@ func NewClient(cf *ClientConfig) *Client {
 	}
 
 	if cf.CollectMetrics {
-		csvWriter, err := utils.NewCSVWriter(path.Join(cf.OutputFolder, fileName))
+		csvPath := cf.OutputFile
+		if csvPath == "" {
+			csvPath = path.Join(cf.OutputFolder, "metrics.csv")
+		}
+		csvWriter, err := utils.NewCSVWriter(csvPath)
 		if err != nil {
 			log.Fatalf("Error creating CSV writer: %+v", err)
 		}

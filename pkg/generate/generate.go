@@ -113,6 +113,32 @@ func NewMessage(userId string) *models.Message {
 	return models.NewMessage(userId, username, message, messageType)
 }
 
+// NewSessionMessages generates a message sequence for a user as repeated session
+// cycles: JOIN → TEXT… → LEAVE. The distribution targets 5% JOIN, 90% TEXT,
+// 5% LEAVE, which always yields 18 TEXT messages per session regardless of
+// messageCount. The actual total may differ slightly from messageCount due to
+// integer rounding of numSessions and textPerSession.
+func NewSessionMessages(userId string, messageCount int) []*models.Message {
+	numSessions := int(float64(messageCount) * 0.05)
+	if numSessions < 1 {
+		numSessions = 1
+	}
+	textPerSession := (messageCount - 2*numSessions) / numSessions
+	if textPerSession < 0 {
+		textPerSession = 0
+	}
+
+	messages := make([]*models.Message, 0, numSessions*(textPerSession+2))
+	for i := 0; i < numSessions; i++ {
+		messages = append(messages, NewJoinMessage(userId, ""))
+		for j := 0; j < textPerSession; j++ {
+			messages = append(messages, NewMessage(userId))
+		}
+		messages = append(messages, NewLeaveMessage(userId, ""))
+	}
+	return messages
+}
+
 // NewRooms returns a slice of unique random room IDs.
 func NewRooms(size int) []string {
 	seen := make(map[string]struct{})

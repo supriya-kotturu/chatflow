@@ -13,6 +13,7 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"supriyakotturu.github.com/chatflow/pkg/env"
@@ -36,14 +37,24 @@ type Client struct {
 	closeOnce sync.Once
 }
 
+// roomEvent is sent through Room.Broadcast for ordered processing by the
+// broadcast goroutine. Either resp is set (fan-out to all users) or
+// removeUserId is set (in-order user removal after all preceding messages).
+type roomEvent struct {
+	resp         *models.Response
+	removeUserId string
+}
+
 // Room represents a chat room containing connected users.
 type Room struct {
-	ID        string
-	Users     map[string]*Client
-	Broadcast chan *models.Response
-	Ctx       context.Context
-	Cancel    context.CancelFunc
-	Mu        sync.RWMutex
+	ID               string
+	Users            map[string]*Client
+	Broadcast        chan roomEvent
+	Ctx              context.Context
+	Cancel           context.CancelFunc
+	Mu               sync.RWMutex
+	DroppedBroadcast atomic.Int64 // messages dropped because Broadcast channel was full
+	DroppedSend      atomic.Int64 // messages dropped because a client's Send channel was full
 }
 
 // Server is the central hub that manages rooms, routes, and request stats.
@@ -55,6 +66,8 @@ type Server struct {
 	Rooms      map[string]*Room
 	Rabbit     rmq.RabbitMQServer
 	Mu         sync.RWMutex
+	UserRooms  map[string][]string // userID → active roomIDs
+	UserRoomMu sync.RWMutex
 	maxRooms   int
 	Stats
 }
@@ -70,16 +83,25 @@ type ServerConfig struct {
 
 // NewServerMux creates a Server with the given per-client send buffer size.
 func NewServerMux(cf *ServerConfig) *Server {
-	return &Server{
+	server := &Server{
 		ID:         cf.Id,
 		Ctx:        cf.Ctx,
-		Rabbit:     cf.Rabbit,
 		BufferSize: cf.BufferSize,
 		Mux:        http.NewServeMux(),
 		Rooms:      make(map[string]*Room),
 		Mu:         sync.RWMutex{},
-		maxRooms:   cf.MaxRooms,
+		UserRooms:  make(map[string][]string),
 	}
+
+	if cf.Rabbit != nil {
+		server.Rabbit = cf.Rabbit
+	}
+
+	if cf.MaxRooms != 0 {
+		server.maxRooms = cf.MaxRooms
+	}
+
+	return server
 }
 
 // RecordSuccess increments the successful request counter.
@@ -90,6 +112,59 @@ func (s *Server) RecordSuccess() {
 // RecordFailure increments the failed request counter.
 func (s *Server) RecordFailure() {
 	s.Stats.FailedRequests.Add(1)
+}
+
+// StartMonitoring logs throughput and health stats every interval.
+// Call this before Start(); it runs in a background goroutine.
+func (s *Server) StartMonitoring(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		var prevSuccess, prevFail int64
+		prevTime := time.Now()
+
+		for {
+			select {
+			case <-ticker.C:
+				now := time.Now()
+				elapsed := now.Sub(prevTime).Seconds()
+
+				success := s.Stats.SuccessfulRequests.Load()
+				fail := s.Stats.FailedRequests.Load()
+
+				successRate := float64(success-prevSuccess) / elapsed
+				failRate := float64(fail-prevFail) / elapsed
+
+				s.Mu.RLock()
+				activeRooms := len(s.Rooms)
+				activeConns := 0
+				for _, r := range s.Rooms {
+					r.Mu.RLock()
+					activeConns += len(r.Users)
+					r.Mu.RUnlock()
+				}
+				s.Mu.RUnlock()
+
+				if s.Rabbit != nil {
+					dropped := s.Rabbit.DroppedMessages()
+
+					log.Printf("[monitor] success=%.0f/s fail=%.0f/s | rooms=%d conns=%d | total: ok=%d err=%d dropped=%d",
+						successRate, failRate, activeRooms, activeConns, success, fail, dropped)
+				} else {
+					log.Printf("[monitor] success=%.0f/s fail=%.0f/s | rooms=%d conns=%d | total: ok=%d err=%d",
+						successRate, failRate, activeRooms, activeConns, success, fail)
+				}
+
+				prevSuccess = success
+				prevFail = fail
+				prevTime = now
+
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 // Start registers HTTP routes and begins listening on the configured port.
@@ -107,11 +182,36 @@ func (s *Server) Start() {
 
 	s.Mux.HandleFunc("GET /{$}", s.HomeHandler)
 	s.Mux.HandleFunc("/health", s.HealthHandler)
+	s.Mux.HandleFunc("GET /metrics", s.MetricsHandler)
 	s.Mux.HandleFunc("/chat/{roomId}", s.ChatRoomHandler)
 
 	s.Mux.HandleFunc("GET /chat-room/{roomId}", s.ChatRoomPageHandler)
 
-	if err := http.ListenAndServe(*addr, s.Mux); err != nil {
+	httpServer := &http.Server{Addr: *addr, Handler: s.Mux}
+
+	go func() {
+		<-s.Ctx.Done()
+
+		// Force-close all WebSocket connections immediately.
+		// httpServer.Shutdown skips hijacked connections (WebSockets), so
+		// ReadJSON calls never unblock and handler goroutines never exit.
+		// Closing each conn here unblocks ReadJSON across all rooms at once.
+		s.Mu.RLock()
+		for _, room := range s.Rooms {
+			room.Mu.RLock()
+			for _, user := range room.Users {
+				user.Conn.Close()
+			}
+			room.Mu.RUnlock()
+		}
+		s.Mu.RUnlock()
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		httpServer.Shutdown(shutdownCtx)
+	}()
+
+	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Printf("Error starting the server: %+v\n", err)
 	}
 }
@@ -127,11 +227,11 @@ func (s *Server) AddNewRoom(roomId string) {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(s.Ctx)
 	room := &Room{
 		ID:        roomId,
 		Users:     make(map[string]*Client),
-		Broadcast: make(chan *models.Response, s.BufferSize*s.maxRooms),
+		Broadcast: make(chan roomEvent, s.BufferSize),
 		Ctx:       ctx,
 		Cancel:    cancel,
 	}
@@ -141,6 +241,7 @@ func (s *Server) AddNewRoom(roomId string) {
 	// forwards the rest into the room's broadcast channel for local fan-out.
 	consumeMessages := func(msg []byte) {
 		var queueMsg models.QueueMessage
+
 		if err := json.Unmarshal(msg, &queueMsg); err != nil {
 			log.Printf("Error un-marshalling message from RabbitMQ: %+v\n", err)
 			return
@@ -153,47 +254,68 @@ func (s *Server) AddNewRoom(roomId string) {
 		message := models.NewResponse(queueMsg.Message)
 		message.ServerTimestamp = queueMsg.Timestamp
 		select {
-		case room.Broadcast <- message:
+		case room.Broadcast <- roomEvent{resp: message}:
 		default:
 			log.Printf("Dropping message for room [%s] due to full broadcast channel\n", roomId)
 		}
 	}
 
-	if err := s.Rabbit.Consume(s.Ctx, roomId, consumeMessages); err != nil {
-		log.Printf("Error consuming messages for room [%s]: %+v\n", roomId, err)
+	if s.Rabbit != nil {
+		if err := s.Rabbit.Consume(s.Ctx, roomId, consumeMessages); err != nil {
+			log.Printf("Error consuming messages for room [%s]: %+v\n", roomId, err)
+		}
 	}
 
-	// broadcast goroutine fans out each message to a snapshot of connected clients.
-	// On room shutdown (ctx cancel), it closes all client Send channels.
+	// broadcast goroutine processes events from Broadcast in FIFO order.
+	// - roomEvent{resp}: fans out the message to all local clients.
+	// - roomEvent{removeUserId}: closes that client's Send channel and removes
+	//   them from Users. Because both events share the same channel, the removal
+	//   is guaranteed to happen only after all preceding messages have been
+	//   delivered — fixing the teardown race where M999/M1000 would be skipped.
+	// On room shutdown (ctx cancel), it closes all remaining client Send channels.
 	go func(r *Room) {
 		for {
-			sendChans := make([]chan *models.Response, 0)
 			select {
-			case resp, ok := <-r.Broadcast:
+			case event, ok := <-r.Broadcast:
 				if !ok {
 					log.Println("Unable to read the message from Broadcast channel.")
 					return
 				}
-				r.Mu.RLock()
-				for _, u := range r.Users {
-					sendChans = append(sendChans, u.Send)
-				}
-				r.Mu.RUnlock()
-
-				// Broadcast the response to all the users in the room.
-				for _, conn := range sendChans {
-					select {
-					case conn <- resp:
-					default:
+				if event.removeUserId != "" {
+					// In-order removal: all messages preceding this event have
+					// already been fanned out, so it is safe to close Send now.
+					r.Mu.Lock()
+					userId := event.removeUserId
+					if client, exists := r.Users[userId]; exists {
+						client.closeOnce.Do(func() { close(client.Send) })
+						delete(r.Users, userId)
+						log.Printf("User %s left room %s", userId, r.ID)
+						r.Mu.Unlock()
+						s.removeFromUserRooms(userId, r.ID)
+					} else {
+						r.Mu.Unlock()
 					}
+				} else {
+					r.Mu.RLock()
+					for _, u := range r.Users {
+						select {
+						case u.Send <- event.resp:
+						default:
+							r.DroppedSend.Add(1)
+							log.Printf("Dropping message for user [%s] in room [%s] due to full send channel\n", u.UserID, r.ID)
+						}
+					}
+					r.Mu.RUnlock()
 				}
 
 			case <-r.Ctx.Done():
 				log.Println("Room context cancelled, closing client connection")
 
-				// Close the user channels if the Room's ctx is cancelled.
+				// Close WebSocket connections first so ReadJSON in the handler
+				// goroutines unblocks and they can exit cleanly.
 				r.Mu.Lock()
 				for _, user := range r.Users {
+					user.Conn.Close()
 					user.closeOnce.Do(func() { close(user.Send) })
 				}
 				r.Mu.Unlock()
@@ -238,11 +360,35 @@ func (s *Server) AddUserToRoom(userId string, roomId string, conn *websocket.Con
 
 	newClient := NewClient(userId, room, conn, s.BufferSize)
 	room.Users[userId] = newClient
+
+	s.UserRoomMu.Lock()
+	s.UserRooms[userId] = append(s.UserRooms[userId], roomId)
+	s.UserRoomMu.Unlock()
+
 	return newClient, nil
 
 }
 
+// removeFromUserRooms removes roomId from the UserRooms index for userId.
+// Called while holding no other locks.
+func (s *Server) removeFromUserRooms(userId, roomId string) {
+	s.UserRoomMu.Lock()
+	defer s.UserRoomMu.Unlock()
+	rooms := s.UserRooms[userId]
+	for i, r := range rooms {
+		if r == roomId {
+			s.UserRooms[userId] = append(rooms[:i], rooms[i+1:]...)
+			break
+		}
+	}
+	if len(s.UserRooms[userId]) == 0 {
+		delete(s.UserRooms, userId)
+	}
+}
+
 // RemoveUserFromRoom removes a user from a room and closes its send channel.
+// Use scheduleRemoveUser for the clean-leave path so that in-flight broadcast
+// messages are delivered before the user is removed.
 func (s *Server) RemoveUserFromRoom(userId string, roomId string) error {
 	s.Mu.RLock()
 	room, exists := s.Rooms[roomId]
@@ -261,10 +407,9 @@ func (s *Server) RemoveUserFromRoom(userId string, roomId string) error {
 		return fmt.Errorf("user %s doesn't exist in room %s", userId, roomId)
 	}
 
-	// Close the Send channel when user explicitly leaves
 	client.closeOnce.Do(func() { close(client.Send) })
 	delete(room.Users, userId)
 	log.Printf("User %s left room %s", userId, roomId)
+	s.removeFromUserRooms(userId, roomId)
 	return nil
-
 }

@@ -2,6 +2,7 @@
 package env
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ type RabbitEnv struct {
 	RabbitUser     string
 	RabbitPassword string
 	RoomCount      int
+	PublishWorkers int
 }
 
 // atoiWithDefault converts a string to an integer, returning a default value if conversion fails.
@@ -34,16 +36,22 @@ func atoiWithDefault(s string, defaultValue int) int {
 	return defaultValue
 }
 
-// LoadEnvFromFile reads the .env file (parent dir first, then cwd) and returns
-// the parsed configuration.
+// LoadEnvFromFile loads environment configuration.
+// Resolution order (first found wins):
+//  1. .env.local  — local overrides, never deployed to EC2
+//  2. .env        — production values, deployed to EC2
+//
+// Both are tried in the parent directory first, then cwd.
 func LoadEnvFromFile() error {
-	err := godotenv.Load("../.env")
-	if err != nil {
-		// Try current directory as fallback
-		return godotenv.Load()
+	for _, name := range []string{".env.local", ".env"} {
+		if err := godotenv.Load("../" + name); err == nil {
+			return nil
+		}
+		if err := godotenv.Load(name); err == nil {
+			return nil
+		}
 	}
-
-	return err
+	return fmt.Errorf("no .env or .env.local file found")
 }
 
 // LoadServerEnv reads the .env file (parent dir first, then cwd) and returns
@@ -88,6 +96,7 @@ func LoadRabbitEnv() (*RabbitEnv, error) {
 	rabbitUser := os.Getenv("RABBIT_USER")
 	rabbitPassword := os.Getenv("RABBIT_PASSWORD")
 	roomCount := os.Getenv("ROOM_COUNT")
+	publishWorkers := os.Getenv("PUBLISH_WORKERS")
 
 	return &RabbitEnv{
 		RabbitHost:     rabbitHost,
@@ -95,5 +104,6 @@ func LoadRabbitEnv() (*RabbitEnv, error) {
 		RabbitUser:     rabbitUser,
 		RabbitPassword: rabbitPassword,
 		RoomCount:      atoiWithDefault(roomCount, 20),
+		PublishWorkers: atoiWithDefault(publishWorkers, 30),
 	}, nil
 }

@@ -6,15 +6,18 @@ import (
 )
 
 func main() {
+	// 500K baseline: 1000 connections, 50 users/room, 500 msgs/user, 20 rooms
+	// Total = 50 × 500 × 20 = 500,000 messages (+2K join/leave ≈ 502K)
+	// MessageBuffer = users/room × msgs/user + margin = 50 × 500 = 25,000 → 60,000 with margin
 	configs := []*ws.ClientConfig{
 		{
 			PoolSize:       1000,
-			UserCount:      100,
-			MessageCount:   1000,
-			RoomCount:      10,
-			MessageBuffer:  120000, // 100 × (10/20) × (1000+2) ≈ 50,100 + margin
+			UserCount:      50,
+			MessageCount:   500,
+			RoomCount:      20,
+			MessageBuffer:  60000,
 			CollectMetrics: true,
-			OutputFolder:   "results/1M_4S",
+			OutputFile:     "results/metrics/500K_EC2_direct.csv",
 		},
 	}
 
