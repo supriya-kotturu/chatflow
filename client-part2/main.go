@@ -8,71 +8,13 @@ import (
 func main() {
 	configs := []*ws.ClientConfig{
 		{
-			PoolSize:      1,
-			UserCount:     1,
-			MessageCount:  1,
-			RoomCount:     1,
-			MessageBuffer: 1,
-		},
-		// 500K: 50 × (500+2) × 20 = 502,000 messages
-		{
-			PoolSize:       1000,
-			UserCount:      50,
-			MessageCount:   500,
-			RoomCount:      20,
-			MessageBuffer:  1200,
-			CollectMetrics: true,
-			OutputFolder:   "results/500K",
-		},
-		// 1M: 100 × (1000+2) × 10 = 1,002,000 messages
-		{
 			PoolSize:       1000,
 			UserCount:      100,
 			MessageCount:   1000,
 			RoomCount:      10,
-			MessageBuffer:  1200,
+			MessageBuffer:  120000, // 100 × (10/20) × (1000+2) ≈ 50,100 + margin
 			CollectMetrics: true,
-			OutputFolder:   "results/1M",
-		},
-		// 1.5M: 100 × (750+2) × 20 = 1,504,000 messages
-		{
-			PoolSize:       1000,
-			UserCount:      100,
-			MessageCount:   750,
-			RoomCount:      20,
-			MessageBuffer:  3000,
-			CollectMetrics: true,
-			OutputFolder:   "results/1_5M",
-		},
-		// 2M: 100 × (1000+2) × 20 = 2,004,000 messages
-		{
-			PoolSize:       2000,
-			UserCount:      100,
-			MessageCount:   1000,
-			RoomCount:      20,
-			MessageBuffer:  2500,
-			CollectMetrics: true,
-			OutputFolder:   "results/2M",
-		},
-		// 2.5M: 125 × (1000+2) × 20 = 2,505,000 messages
-		{
-			PoolSize:       2500,
-			UserCount:      125,
-			MessageCount:   1000,
-			RoomCount:      20,
-			MessageBuffer:  3000,
-			CollectMetrics: true,
-			OutputFolder:   "results/2_5M",
-		},
-		// 3.5M: 175 × (1000+2) × 20 = 3,507,000 messages
-		{
-			PoolSize:       3500,
-			UserCount:      175,
-			MessageCount:   1000,
-			RoomCount:      20,
-			MessageBuffer:  3500,
-			CollectMetrics: true,
-			OutputFolder:   "results/3_5M",
+			OutputFolder:   "results/1M_4S",
 		},
 	}
 

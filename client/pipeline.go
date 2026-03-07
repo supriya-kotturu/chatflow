@@ -15,7 +15,7 @@ func RunPipelineLoadTest(config *ws.ClientConfig) {
 	c := ws.NewClient(config)
 	defer c.Pool.CloseAll()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
 	start := time.Now()

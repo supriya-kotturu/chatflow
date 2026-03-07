@@ -91,14 +91,14 @@ func NewClient(cf *ClientConfig) *Client {
 	}
 
 	client.MessageCount.Store(int32(cf.MessageCount))
-	client.expectedMessages.Store(int32(cf.MessageCount + 2))
+	client.expectedMessages.Store(int32(cf.UserCount * (cf.MessageCount + 2)))
 	client.statsChan = make(chan *models.RoomStats, cf.MessageBuffer)
 
 	return client
 }
 
 // GenerateConnElements creates a ConnElement per room for the given user
-// and sends each to the roomChan for processing.
+// (JOIN + MessageCount TEXT messages + LEAVE) and sends each to roomChan.
 func (c *Client) GenerateConnElements(userId string) {
 	for _, roomId := range c.RoomIDs {
 		userConn, err := c.Pool.GetOrCreateNewWsClient(userId, roomId)
@@ -107,16 +107,12 @@ func (c *Client) GenerateConnElements(userId string) {
 			continue
 		}
 
-		messages := []*models.Message{}
-
-		joinMsg := generate.NewJoinMessage(userId, roomId)
-		leaveMsg := generate.NewLeaveMessage(userId, roomId)
-
-		messages = append(messages, joinMsg)
+		messages := make([]*models.Message, 0, int(c.MessageCount.Load())+2)
+		messages = append(messages, generate.NewJoinMessage(userId, roomId))
 		for i := 0; i < int(c.MessageCount.Load()); i++ {
 			messages = append(messages, generate.NewMessage(userId))
 		}
-		messages = append(messages, leaveMsg)
+		messages = append(messages, generate.NewLeaveMessage(userId, roomId))
 
 		conn := &ConnElement{
 			UserID:   userId,
@@ -158,14 +154,24 @@ func (c *Client) WriteMessages(ctx context.Context) {
 			defer c.Wg.Done()
 			defer c.Pool.Remove(room.UserID, room.RoomID)
 
-			// Read messages sent from the server
+			// Pre-count the LEAVE messages in this user's sequence. The reader
+			// goroutine uses this to know when the final session cycle has ended
+			// (server echoes each LEAVE back to all room members including the sender).
+			expectedLeaves := 0
+			for _, m := range room.Messages {
+				if m.MessageType == models.MessageTypeLeave {
+					expectedLeaves++
+				}
+			}
+
 			readDone := make(chan struct{})
 			go func() {
 				defer close(readDone)
-				expected := len(room.Messages)
+				usersSeenSending := make(map[string]struct{})
 				received := 0
+				ownLeavesReceived := 0
 				var totalLatency int64
-				latencies := make([]int64, 0, expected)
+				latencies := make([]int64, 0, len(room.Messages))
 				startTime := time.Now()
 				messageTypes := make(map[models.MessageType]int)
 
@@ -177,6 +183,7 @@ func (c *Client) WriteMessages(ctx context.Context) {
 					sort.Slice(latencies, func(i, j int) bool {
 						return latencies[i] < latencies[j]
 					})
+					actualExpected := len(usersSeenSending) * len(room.Messages)
 					stats := &models.RoomStats{
 						RoomID:              room.RoomID,
 						UserID:              room.UserID,
@@ -191,11 +198,10 @@ func (c *Client) WriteMessages(ctx context.Context) {
 						MessageTypes:        messageTypes,
 					}
 					c.statsChan <- stats
-					// log.Printf("User %s in room %s avg latency: %dms (%d/%d received)",
-					// 	room.UserID, room.RoomID, totalLatency/int64(n), received, expected)
+					log.Printf("DONE: User %s in room %s: received %d/%d", room.UserID, room.RoomID, received, actualExpected)
 				}
 
-				for received < expected {
+				for {
 					select {
 					case resp, ok := <-room.Conn.Send:
 						if !ok {
@@ -204,32 +210,36 @@ func (c *Client) WriteMessages(ctx context.Context) {
 						}
 
 						received++
-						sendTime, sendTimeErr := time.Parse(time.RFC3339Nano, resp.Timestamp)
 						messageTypes[resp.MessageType]++
 
-						if sendTimeErr != nil {
-							continue
+						if resp.MessageType == models.MessageTypeJoin {
+							usersSeenSending[resp.UserID] = struct{}{}
 						}
 
-						latency := time.Since(sendTime).Milliseconds()
-						latencies = append(latencies, latency)
+						sendTime, sendTimeErr := time.Parse(time.RFC3339Nano, resp.Timestamp)
+						if sendTimeErr == nil {
+							latency := time.Since(sendTime).Milliseconds()
+							latencies = append(latencies, latency)
+							totalLatency += latency
 
-						// Uncomment below line to log messages
-						// log.Printf("User %s in room %s echoed: %s | %d", room.UserID, room.RoomID, resp.MessageType, latency)
-
-						if c.collectMetrics {
-							c.WriteMetricToChan(resp.Message.Timestamp, resp.Message.MessageType, latency, resp.Status, room.RoomID)
+							if c.collectMetrics {
+								c.WriteMetricToChan(resp.Message.Timestamp, resp.Message.MessageType, latency, resp.Status, room.RoomID)
+							}
 						}
 
-						totalLatency += latency
-
-						if received >= expected {
-							sendStats()
-							return
+						// Track own LEAVE echoes; terminate after the last session ends.
+						if resp.MessageType == models.MessageTypeLeave && resp.UserID == room.UserID {
+							ownLeavesReceived++
+							if ownLeavesReceived >= expectedLeaves {
+								sendStats()
+								return
+							}
 						}
+
 					case <-ctx.Done():
+						actualExpected := len(usersSeenSending) * len(room.Messages)
 						log.Printf("User %s in room %s timed out: %d/%d",
-							room.UserID, room.RoomID, received, expected)
+							room.UserID, room.RoomID, received, actualExpected)
 						sendStats()
 						return
 					}

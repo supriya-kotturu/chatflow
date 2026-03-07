@@ -11,7 +11,7 @@ func main() {
 		UserCount:     32,
 		MessageCount:  1000,
 		RoomCount:     10,
-		MessageBuffer: 1250,
+		MessageBuffer: 20000, // 32 users × (10/20 rooms) × (1000+2) ≈ 16,032 + margin
 	}
 
 	client.RunFanOutLoadTest(config) // 29.6655396s

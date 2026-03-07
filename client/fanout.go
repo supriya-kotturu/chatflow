@@ -54,9 +54,7 @@ func RunFanOutLoadTest(config *ws.ClientConfig) {
 				expectedSent := cf.MessageCount + 2
 				receivedMsgs := 0
 				sentMsgs := 0
-				// joinsSeen tracks distinct users co-present in this room via JOIN messages.
-				// actualExpected = joinsSeen * expectedSent is the true received target.
-				joinsSeen := 0
+				usersSeenSending := make(map[string]struct{})
 
 				// Read responses from the server; count JOINs to compute actual expected.
 				go func(room string, conn *ws.WsClient) {
@@ -70,7 +68,7 @@ func RunFanOutLoadTest(config *ws.ClientConfig) {
 					for resp := range conn.Send {
 						receivedMsgs++
 						if resp.MessageType == models.MessageTypeJoin {
-							joinsSeen++
+							usersSeenSending[resp.UserID] = struct{}{}
 						}
 						if receivedMsgs >= expectedMsgs {
 							close(msgDone)
@@ -139,7 +137,7 @@ func RunFanOutLoadTest(config *ws.ClientConfig) {
 				<-readerDone
 				// actualExpected is computed from JOINs seen: each JOIN = one co-present user
 				// who will send (MessageCount + 2) messages total.
-				actualExpected := joinsSeen * expectedSent
+				actualExpected := len(usersSeenSending) * expectedSent
 				log.Printf("DONE: User %d in room %s: sent %d/%d | received %d/%d", userId, roomId, sentMsgs, expectedSent, receivedMsgs, actualExpected)
 			}
 		}(uid, config)
