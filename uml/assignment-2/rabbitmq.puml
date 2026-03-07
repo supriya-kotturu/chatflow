@@ -1,0 +1,46 @@
+@startuml
+namespace rabbitmq {
+    class "Rabbit" << (S,Aquamarine) >> {
+        - serverID string
+        - exchangeName string
+        - tempBuffer <font color=blue>chan</font> *pendingMessage
+        - publishChan <font color=blue>chan</font> *pendingMessage
+        - conn *rabbitmqamqp.AmqpConnection
+        - consumerConn *rabbitmqamqp.AmqpConnection
+        - consumers <font color=blue>map</font>[string]*rabbitmqamqp.Consumer
+        - handlers <font color=blue>map</font>[string]<font color=blue>func</font>([]byte) 
+        - handlersMu sync.RWMutex
+        - cb *gobreaker.CircuitBreaker
+        - stateChanged <font color=blue>chan</font> *rabbitmqamqp.StateChanged
+        - droppedMessages atomic.Int64
+        - totalLagMs atomic.Int64
+        - lagSampleCount atomic.Int64
+
+        - publishWorker(ctx context.Context, publisher *rabbitmqamqp.Publisher) 
+        - publishDirect(ctx context.Context, publisher *rabbitmqamqp.Publisher, roomId string, message *models.QueueMessage) 
+        - startMonitoring(ctx context.Context, host string, user string, password string) 
+
+        + ServerID() string
+        + DroppedMessages() int64
+        + Publish(ctx context.Context, roomId string, message *models.QueueMessage) error
+        + Consume(ctx context.Context, roomId string, handler <font color=blue>func</font>([]byte) ) error
+
+    }
+    interface "RabbitMQServer"  {
+        + Publish(ctx context.Context, roomId string, message *models.QueueMessage) error
+        + Consume(ctx context.Context, roomId string, handler <font color=blue>func</font>([]byte) ) error
+        + ServerID() string
+        + DroppedMessages() int64
+
+    }
+    class "pendingMessage" << (S,Aquamarine) >> {
+        - roomId string
+        - message *models.QueueMessage
+
+    }
+}
+
+"rabbitmq.RabbitMQServer" <|-- "rabbitmq.Rabbit"
+
+
+@enduml
