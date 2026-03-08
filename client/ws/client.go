@@ -157,22 +157,11 @@ func (c *Client) WriteMessages(ctx context.Context) {
 			defer c.Wg.Done()
 			defer c.Pool.Remove(room.UserID, room.RoomID)
 
-			// Pre-count the LEAVE messages in this user's sequence. The reader
-			// goroutine uses this to know when the final session cycle has ended
-			// (server echoes each LEAVE back to all room members including the sender).
-			expectedLeaves := 0
-			for _, m := range room.Messages {
-				if m.MessageType == models.MessageTypeLeave {
-					expectedLeaves++
-				}
-			}
-
 			readDone := make(chan struct{})
 			go func() {
 				defer close(readDone)
 				usersSeenSending := make(map[string]struct{})
 				received := 0
-				ownLeavesReceived := 0
 				var totalLatency int64
 				latencies := make([]int64, 0, len(room.Messages))
 				startTime := time.Now()
@@ -230,13 +219,10 @@ func (c *Client) WriteMessages(ctx context.Context) {
 							}
 						}
 
-						// Track own LEAVE echoes; terminate after the last session ends.
+						// Terminate when own LEAVE echo is received — one per connection.
 						if resp.MessageType == models.MessageTypeLeave && resp.UserID == room.UserID {
-							ownLeavesReceived++
-							if ownLeavesReceived >= expectedLeaves {
-								sendStats()
-								return
-							}
+							sendStats()
+							return
 						}
 
 					case <-ctx.Done():

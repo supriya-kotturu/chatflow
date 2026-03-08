@@ -15,8 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sony/gobreaker"
 	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
+	"github.com/sony/gobreaker"
 	"supriyakotturu.github.com/chatflow/pkg/env"
 	"supriyakotturu.github.com/chatflow/pkg/models"
 )
@@ -27,7 +27,6 @@ type pendingMessage struct {
 	roomId  string
 	message *models.QueueMessage
 }
-
 
 // Rabbit manages a single AMQP connection with per-worker publishers and
 // per-room consumers, plus a circuit breaker for connection failures.
@@ -222,8 +221,6 @@ func NewRabbitMQ(ctx context.Context, serverId string, tempBufferSize int, publi
 
 				// Accept in a separate goroutine so the receive loop can immediately
 				// call Receive() again, keeping AMQP credits flowing back to the broker.
-				// Without this, Accept() blocks the loop and credits are exhausted after
-				// InitialCredits messages, stalling the queue permanently.
 				d := delivery
 				go func() {
 					if err := d.Accept(ctx); err != nil {

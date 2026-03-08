@@ -311,8 +311,6 @@ func (s *Server) AddNewRoom(roomId string) {
 			case <-r.Ctx.Done():
 				log.Println("Room context cancelled, closing client connection")
 
-				// Close WebSocket connections first so ReadJSON in the handler
-				// goroutines unblocks and they can exit cleanly.
 				r.Mu.Lock()
 				for _, user := range r.Users {
 					user.Conn.Close()
