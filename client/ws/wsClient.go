@@ -45,7 +45,7 @@ func NewWsClient(messageBuffer int, host string, port string, roomId string) (*W
 			break
 		}
 		retries = attempt + 1
-		fmt.Printf("attempt %d failed: %v, retrying in %v...\n", retries, err, backoff)
+		fmt.Printf("attempt %d failed dialing room[%s]: %v, retrying in %v...\n", retries, roomId, err, backoff)
 		time.Sleep(backoff)
 		backoff *= 2
 	}

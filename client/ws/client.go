@@ -5,14 +5,17 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"path"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"supriyakotturu.github.com/chatflow/pkg/env"
 	"supriyakotturu.github.com/chatflow/pkg/generate"
 	"supriyakotturu.github.com/chatflow/pkg/models"
@@ -233,14 +236,45 @@ func (c *Client) WriteMessages(ctx context.Context) {
 				}
 			}()
 
+			maxRetries := 5
+
 			// Write messages to the server
 			for _, m := range room.Messages {
-				m.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
-				if err := room.Conn.Write(m); err != nil {
-					c.Pool.FailedMessages.Add(1)
-					log.Printf("User %s write to room %s error: %+v", room.UserId, room.RoomId, err)
-				} else {
-					c.Pool.SuccessfulMessages.Add(1)
+				backoff := 1 * time.Second
+				retries := 0
+
+				for attempt := 0; attempt < maxRetries; attempt++ {
+					m.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
+					err := room.Conn.Write(m)
+
+					if err == nil {
+						c.Pool.SuccessfulMessages.Add(1)
+						break
+					}
+
+					// if the connection to the server is lost, don't retry on the closed connection
+					// abandon the writes instead.
+					var netErr *net.OpError
+					if errors.As(err, &netErr) || websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
+						c.Pool.FailedConnections.Add(1)
+						log.Printf("User %s connection to room %s lost: %+v", room.UserId, room.RoomId, err)
+						return
+					}
+
+					retries = attempt + 1
+					fmt.Printf("attempt %d failed message write: %v, retrying in %v...\n", retries, err, backoff)
+
+					select {
+					case <-time.After(backoff):
+					case <-ctx.Done():
+						return
+					}
+
+					backoff *= 2
+					if attempt == maxRetries-1 {
+						c.Pool.FailedMessages.Add(1)
+						log.Printf("User %s write to room %s error: %+v", room.UserId, room.RoomId, err)
+					}
 				}
 			}
 
