@@ -28,6 +28,24 @@ type RabbitEnv struct {
 	PublishWorkers int
 }
 
+type DBEnv struct {
+	DBHost     string
+	DBPort     string
+	DBUser     string
+	DBPassword string
+	DBName     string
+}
+
+type ConsumerEnv struct {
+	RabbitEnv
+	DBEnv
+	ConsumerWorkers int
+	StatsWorkers    int
+	DBWorkers       int
+	BatchSize       int
+	FlushInterval   int
+}
+
 // atoiWithDefault converts a string to an integer, returning a default value if conversion fails.
 func atoiWithDefault(s string, defaultValue int) int {
 	if val, err := strconv.Atoi(s); err == nil {
@@ -105,5 +123,56 @@ func LoadRabbitEnv() (*RabbitEnv, error) {
 		RabbitPassword: rabbitPassword,
 		RoomCount:      atoiWithDefault(roomCount, 20),
 		PublishWorkers: atoiWithDefault(publishWorkers, 30),
+	}, nil
+}
+
+// LoadDBEnv reads the .env file (parent dir first, then cwd) and returns
+// the parsed configuration for PostgreSQL database.
+func LoadDBEnv() (*DBEnv, error) {
+	err := LoadEnvFromFile()
+
+	if err != nil {
+		return nil, err
+	}
+
+	dbHost := os.Getenv("DB_HOST")
+	dbPort := os.Getenv("DB_PORT")
+	dbUser := os.Getenv("DB_USER")
+	dbPassword := os.Getenv("DB_PASSWORD")
+	dbName := os.Getenv("DB_NAME")
+
+	return &DBEnv{
+		DBHost:     dbHost,
+		DBPort:     dbPort,
+		DBUser:     dbUser,
+		DBPassword: dbPassword,
+		DBName:     dbName,
+	}, nil
+}
+
+func LoadConsumerEnv() (*ConsumerEnv, error) {
+	rabbit, err := LoadRabbitEnv()
+	if err != nil {
+		return nil, err
+	}
+	db, err := LoadDBEnv()
+	if err != nil {
+		return nil, err
+	}
+
+	consumerWorkers := os.Getenv("CONSUMER_WORKERS")
+	statsWorkers := os.Getenv("STATS_WORKERS")
+	dbWorkers := os.Getenv("DB_WORKERS")
+	batchSize := os.Getenv("BATCH_SIZE")
+	flushInterval := os.Getenv("FLUSH_INTERVAL")
+
+	return &ConsumerEnv{
+		RabbitEnv:       *rabbit,
+		DBEnv:           *db,
+		ConsumerWorkers: atoiWithDefault(consumerWorkers, 5),
+		StatsWorkers:    atoiWithDefault(statsWorkers, 5),
+		DBWorkers:       atoiWithDefault(dbWorkers, 5),
+		BatchSize:       atoiWithDefault(batchSize, 500),
+		FlushInterval:   atoiWithDefault(flushInterval, 100),
 	}, nil
 }
