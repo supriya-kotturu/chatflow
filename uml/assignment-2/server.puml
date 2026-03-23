@@ -1,0 +1,94 @@
+@startuml
+namespace server {
+    class "Client" << (S,Aquamarine) >> {
+        - closeOnce sync.Once
+
+        + Conn *websocket.Conn
+        + Send <font color=blue>chan</font> *models.Response
+        + Room *Room
+        + UserID string
+
+    }
+    class "Room" << (S,Aquamarine) >> {
+        + ID string
+        + Users <font color=blue>map</font>[string]*Client
+        + Broadcast <font color=blue>chan</font> roomEvent
+        + Ctx context.Context
+        + Cancel context.CancelFunc
+        + Mu sync.RWMutex
+        + DroppedBroadcast atomic.Int64
+        + DroppedSend atomic.Int64
+
+    }
+    class "Server" << (S,Aquamarine) >> {
+        - maxRooms int
+
+        + ID string
+        + Ctx context.Context
+        + BufferSize int
+        + Mux *http.ServeMux
+        + Rooms <font color=blue>map</font>[string]*Room
+        + Rabbit rabbitmq.RabbitMQServer
+        + Mu sync.RWMutex
+        + UserRooms <font color=blue>map</font>[string][]string
+        + UserRoomMu sync.RWMutex
+
+        - handleClientWrites(client *Client) 
+        - broadcastAndPublish(ctx context.Context, client *Client, resp *models.Response, clientIp string) 
+        - scheduleRemoveUser(client *Client) 
+        - removeFromUserRooms(userId string, roomId string) 
+
+        + ChatRoomHandler(w http.ResponseWriter, r *http.Request) 
+        + ChatRoomPageHandler(w http.ResponseWriter, r *http.Request) 
+        + HealthHandler(w http.ResponseWriter, r *http.Request) 
+        + HomeHandler(w http.ResponseWriter, r *http.Request) 
+        + MetricsHandler(w http.ResponseWriter, r *http.Request) 
+        + RecordSuccess() 
+        + RecordFailure() 
+        + StartMonitoring(ctx context.Context, interval time.Duration) 
+        + Start() 
+        + AddNewRoom(roomId string) 
+        + AddUserToRoom(userId string, roomId string, conn *websocket.Conn) (*Client, error)
+        + RemoveUserFromRoom(userId string, roomId string) error
+
+    }
+    class "ServerConfig" << (S,Aquamarine) >> {
+        + Id string
+        + Ctx context.Context
+        + Rabbit rabbitmq.RabbitMQServer
+        + BufferSize int
+        + MaxRooms int
+
+    }
+    class "Stats" << (S,Aquamarine) >> {
+        + SuccessfulRequests atomic.Int64
+        + FailedRequests atomic.Int64
+
+    }
+    class "metricsResponse" << (S,Aquamarine) >> {
+        + Rooms <font color=blue>map</font>[string]roomMetrics
+        + UserSessions <font color=blue>map</font>[string][]string
+        + TotalConnections int
+        + SuccessfulMsgs int64
+        + FailedMsgs int64
+        + RabbitDropped int64
+        + CircuitState string
+
+    }
+    class "roomEvent" << (S,Aquamarine) >> {
+        - resp *models.Response
+        - removeUserId string
+
+    }
+    class "roomMetrics" << (S,Aquamarine) >> {
+        + Users []string
+        + DroppedBroadcast int64
+        + DroppedSend int64
+
+    }
+}
+"server.Stats" *-- "server.Server"
+
+
+
+@enduml

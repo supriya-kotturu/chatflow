@@ -1,7 +1,7 @@
-// Package client implements the ChatFlow load-testing client.
+// Package ws implements the ChatFlow load-testing client.
 // It generates concurrent users that join rooms, send messages,
 // and collect per-room latency and throughput statistics.
-package client
+package ws
 
 import (
 	"context"
@@ -24,8 +24,8 @@ import (
 
 // ConnElement groups a user's connection and pre-generated messages for one room.
 type ConnElement struct {
-	UserId   string
-	RoomId   string
+	UserID   string
+	RoomID   string
 	Messages []*models.Message
 	Conn     *WsClient
 }
@@ -34,8 +34,8 @@ type ConnElement struct {
 // writing, reading, metrics collection, and stats aggregation.
 type Client struct {
 	Pool             *Pool
-	RoomIds          []string
-	UserIds          []string
+	RoomIDs          []string
+	UserIDs          []string
 	MessageCount     atomic.Int32
 	expectedMessages atomic.Int32
 	receivedMessages atomic.Int32
@@ -58,29 +58,32 @@ type ClientConfig struct {
 	CollectMetrics bool
 	LogMessages    bool
 	OutputFolder   string
+	OutputFile     string // if set, used directly as the CSV path instead of OutputFolder/metrics.csv
 }
 
 // NewClient initializes a Client with a connection pool, users, rooms, and optional CSV metrics.
 func NewClient(cf *ClientConfig) *Client {
-	e, err := env.LoadEnv()
-	fileName := "metrics.csv"
-
+	e, err := env.LoadServerEnv()
 	if err != nil {
 		log.Fatalf("Error loading the environment variables: %+v", err)
 	}
-	pool := NewWsClientPool(cf.PoolSize, e.ServerHost, e.Port)
+	pool := NewWsClientPool(cf.PoolSize, e.ServerHost, e.Port, cf.MessageBuffer)
 
 	client := &Client{
 		Pool:     pool,
-		RoomIds:  generate.NewRooms(cf.RoomCount),
-		UserIds:  generate.NewUsers(cf.UserCount),
+		RoomIDs:  generate.NewRooms(cf.RoomCount),
+		UserIDs:  generate.NewUsers(cf.UserCount),
 		roomChan: make(chan *ConnElement, cf.MessageBuffer),
 		Wg:       &sync.WaitGroup{},
 		mu:       &sync.RWMutex{},
 	}
 
 	if cf.CollectMetrics {
-		csvWriter, err := utils.NewCSVWriter(path.Join(cf.OutputFolder, fileName))
+		csvPath := cf.OutputFile
+		if csvPath == "" {
+			csvPath = path.Join(cf.OutputFolder, "metrics.csv")
+		}
+		csvWriter, err := utils.NewCSVWriter(csvPath)
 		if err != nil {
 			log.Fatalf("Error creating CSV writer: %+v", err)
 		}
@@ -91,36 +94,32 @@ func NewClient(cf *ClientConfig) *Client {
 	}
 
 	client.MessageCount.Store(int32(cf.MessageCount))
-	client.expectedMessages.Store(int32(cf.MessageCount + 2))
+	client.expectedMessages.Store(int32(cf.UserCount * (cf.MessageCount + 2)))
 	client.statsChan = make(chan *models.RoomStats, cf.MessageBuffer)
 
 	return client
 }
 
 // GenerateConnElements creates a ConnElement per room for the given user
-// and sends each to the roomChan for processing.
+// (JOIN + MessageCount TEXT messages + LEAVE) and sends each to roomChan.
 func (c *Client) GenerateConnElements(userId string) {
-	for _, roomId := range c.RoomIds {
+	for _, roomId := range c.RoomIDs {
 		userConn, err := c.Pool.GetOrCreateNewWsClient(userId, roomId)
 		if err != nil {
 			log.Printf("User %s failed to connect to room %s: %+v", userId, roomId, err)
 			continue
 		}
 
-		messages := []*models.Message{}
-
-		joinMsg := generate.NewJoinMessage(userId, roomId)
-		leaveMsg := generate.NewLeaveMessage(userId, roomId)
-
-		messages = append(messages, joinMsg)
+		messages := make([]*models.Message, 0, int(c.MessageCount.Load())+2)
+		messages = append(messages, generate.NewJoinMessage(userId, roomId))
 		for i := 0; i < int(c.MessageCount.Load()); i++ {
 			messages = append(messages, generate.NewMessage(userId))
 		}
-		messages = append(messages, leaveMsg)
+		messages = append(messages, generate.NewLeaveMessage(userId, roomId))
 
 		conn := &ConnElement{
-			UserId:   userId,
-			RoomId:   roomId,
+			UserID:   userId,
+			RoomID:   roomId,
 			Messages: messages,
 			Conn:     userConn,
 		}
@@ -135,7 +134,7 @@ func (c *Client) GenerateMessages() {
 	defer close(c.roomChan)
 	var wg sync.WaitGroup
 
-	for _, userId := range c.UserIds {
+	for _, userId := range c.UserIDs {
 		wg.Add(1)
 
 		go func(userId string) {
@@ -156,16 +155,15 @@ func (c *Client) WriteMessages(ctx context.Context) {
 
 		go func(room *ConnElement) {
 			defer c.Wg.Done()
-			defer c.Pool.Remove(room.UserId, room.RoomId)
+			defer c.Pool.Remove(room.UserID, room.RoomID)
 
-			// Read messages sent from the server
 			readDone := make(chan struct{})
 			go func() {
 				defer close(readDone)
-				expected := len(room.Messages)
+				usersSeenSending := make(map[string]struct{})
 				received := 0
 				var totalLatency int64
-				latencies := make([]int64, 0, expected)
+				latencies := make([]int64, 0, len(room.Messages))
 				startTime := time.Now()
 				messageTypes := make(map[models.MessageType]int)
 
@@ -177,9 +175,10 @@ func (c *Client) WriteMessages(ctx context.Context) {
 					sort.Slice(latencies, func(i, j int) bool {
 						return latencies[i] < latencies[j]
 					})
+					actualExpected := len(usersSeenSending) * len(room.Messages)
 					stats := &models.RoomStats{
-						RoomId:              room.RoomId,
-						UserId:              room.UserId,
+						RoomID:              room.RoomID,
+						UserID:              room.UserID,
 						MessageCount:        received,
 						MeanLatency:         totalLatency / int64(n),
 						MedianLatency:       latencies[n/2],
@@ -191,11 +190,10 @@ func (c *Client) WriteMessages(ctx context.Context) {
 						MessageTypes:        messageTypes,
 					}
 					c.statsChan <- stats
-					// log.Printf("User %s in room %s avg latency: %dms (%d/%d received)",
-					// 	room.UserId, room.RoomId, totalLatency/int64(n), received, expected)
+					log.Printf("DONE: User %s in room %s: received %d/%d", room.UserID, room.RoomID, received, actualExpected)
 				}
 
-				for received < expected {
+				for {
 					select {
 					case resp, ok := <-room.Conn.Send:
 						if !ok {
@@ -204,32 +202,33 @@ func (c *Client) WriteMessages(ctx context.Context) {
 						}
 
 						received++
-						sendTime, sendTimeErr := time.Parse(time.RFC3339Nano, resp.Timestamp)
 						messageTypes[resp.MessageType]++
 
-						if sendTimeErr != nil {
-							continue
+						if resp.MessageType == models.MessageTypeJoin {
+							usersSeenSending[resp.UserID] = struct{}{}
 						}
 
-						latency := time.Since(sendTime).Milliseconds()
-						latencies = append(latencies, latency)
+						sendTime, sendTimeErr := time.Parse(time.RFC3339Nano, resp.Timestamp)
+						if sendTimeErr == nil {
+							latency := time.Since(sendTime).Milliseconds()
+							latencies = append(latencies, latency)
+							totalLatency += latency
 
-						// Uncomment below line to log messages
-						// log.Printf("User %s in room %s echoed: %s | %d", room.UserId, room.RoomId, resp.MessageType, latency)
-
-						if c.collectMetrics {
-							c.WriteMetricToChan(resp.Message.Timestamp, resp.Message.MessageType, latency, resp.Status, room.RoomId)
+							if c.collectMetrics {
+								c.WriteMetricToChan(resp.Message.Timestamp, resp.Message.MessageType, latency, resp.Status, room.RoomID)
+							}
 						}
 
-						totalLatency += latency
-
-						if received >= expected {
+						// Terminate when own LEAVE echo is received — one per connection.
+						if resp.MessageType == models.MessageTypeLeave && resp.UserID == room.UserID {
 							sendStats()
 							return
 						}
+
 					case <-ctx.Done():
+						actualExpected := len(usersSeenSending) * len(room.Messages)
 						log.Printf("User %s in room %s timed out: %d/%d",
-							room.UserId, room.RoomId, received, expected)
+							room.UserID, room.RoomID, received, actualExpected)
 						sendStats()
 						return
 					}
@@ -257,7 +256,7 @@ func (c *Client) WriteMessages(ctx context.Context) {
 					var netErr *net.OpError
 					if errors.As(err, &netErr) || websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
 						c.Pool.FailedConnections.Add(1)
-						log.Printf("User %s connection to room %s lost: %+v", room.UserId, room.RoomId, err)
+						log.Printf("User %s connection to room %s lost: %+v", room.UserID, room.RoomID, err)
 						return
 					}
 
@@ -273,7 +272,7 @@ func (c *Client) WriteMessages(ctx context.Context) {
 					backoff *= 2
 					if attempt == maxRetries-1 {
 						c.Pool.FailedMessages.Add(1)
-						log.Printf("User %s write to room %s error: %+v", room.UserId, room.RoomId, err)
+						log.Printf("User %s write to room %s error: %+v", room.UserID, room.RoomID, err)
 					}
 				}
 			}
@@ -338,7 +337,7 @@ func (c *Client) GetOverAllStats() {
 	allLatencies := []int64{}
 
 	for rs := range c.statsChan {
-		roomStatsMap[rs.RoomId] = append(roomStatsMap[rs.RoomId], rs)
+		roomStatsMap[rs.RoomID] = append(roomStatsMap[rs.RoomID], rs)
 		allLatencies = append(allLatencies, rs.MeanLatency)
 		allThroughputs = append(allThroughputs, rs.ThroughPut)
 	}

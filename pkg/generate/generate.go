@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
+	"time"
 
 	"supriyakotturu.github.com/chatflow/pkg/models"
 )
@@ -63,8 +64,8 @@ var messages []string = []string{
 	"What do you call a group of disorganized cats? A cat-astrophe!",
 }
 
-// UserId returns a random numeric user ID between 1 and 100000.
-func UserId() string {
+// UserID returns a random numeric user ID between 1 and 100000.
+func UserID() string {
 	return strconv.Itoa(rand.Intn(100000) + 1)
 }
 
@@ -79,21 +80,28 @@ func Message() string {
 	return strconv.Itoa(idx) + "--" + messages[idx]
 }
 
-// ChatRoomId returns a random room ID between 1 and 20.
-func ChatRoomId() string {
-	return strconv.Itoa(rand.Intn(20) + 1)
+// TotalRooms is the size of the room ID space used by ChatRoomID.
+const TotalRooms = 20
+
+// ChatRoomID returns a random room ID between 1 and TotalRooms.
+func ChatRoomID() string {
+	return strconv.Itoa(rand.Intn(TotalRooms) + 1)
 }
 
 // NewJoinMessage creates a JOIN message for the given user and room.
 func NewJoinMessage(userId string, chatRoom string) *models.Message {
 	username := Username(userId)
-	return models.NewMessage(userId, username, "", models.MessageTypeJoin)
+	msg := models.NewMessage(userId, username, "", models.MessageTypeJoin)
+	msg.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
+	return msg
 }
 
 // NewLeaveMessage creates a LEAVE message for the given user and room.
 func NewLeaveMessage(userId string, chatRoom string) *models.Message {
 	username := Username(userId)
-	return models.NewMessage(userId, username, "", models.MessageTypeLeave)
+	msg := models.NewMessage(userId, username, "", models.MessageTypeLeave)
+	msg.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
+	return msg
 }
 
 // NewMessage creates a TEXT message with a random body for the given user.
@@ -105,12 +113,38 @@ func NewMessage(userId string) *models.Message {
 	return models.NewMessage(userId, username, message, messageType)
 }
 
+// NewSessionMessages generates a message sequence for a user as repeated session
+// cycles: JOIN → TEXT… → LEAVE. The distribution targets 5% JOIN, 90% TEXT,
+// 5% LEAVE, which always yields 18 TEXT messages per session regardless of
+// messageCount. The actual total may differ slightly from messageCount due to
+// integer rounding of numSessions and textPerSession.
+func NewSessionMessages(userId string, messageCount int) []*models.Message {
+	numSessions := int(float64(messageCount) * 0.05)
+	if numSessions < 1 {
+		numSessions = 1
+	}
+	textPerSession := (messageCount - 2*numSessions) / numSessions
+	if textPerSession < 0 {
+		textPerSession = 0
+	}
+
+	messages := make([]*models.Message, 0, numSessions*(textPerSession+2))
+	for i := 0; i < numSessions; i++ {
+		messages = append(messages, NewJoinMessage(userId, ""))
+		for j := 0; j < textPerSession; j++ {
+			messages = append(messages, NewMessage(userId))
+		}
+		messages = append(messages, NewLeaveMessage(userId, ""))
+	}
+	return messages
+}
+
 // NewRooms returns a slice of unique random room IDs.
 func NewRooms(size int) []string {
 	seen := make(map[string]struct{})
 	rooms := make([]string, 0, size)
 	for len(rooms) < size {
-		id := ChatRoomId()
+		id := ChatRoomID()
 		if _, ok := seen[id]; !ok {
 			seen[id] = struct{}{}
 			rooms = append(rooms, id)

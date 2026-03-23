@@ -9,7 +9,7 @@ type Metric struct {
 	MessageType MessageType
 	Latency     int64
 	StatusCode  int
-	RoomId      string
+	RoomID      string
 }
 
 // NewMetric creates a Metric with the given fields.
@@ -19,7 +19,7 @@ func NewMetric(timestamp string, messageType MessageType, latency int64, statusC
 		MessageType: messageType,
 		Latency:     latency,
 		StatusCode:  statusCode,
-		RoomId:      roomId,
+		RoomID:      roomId,
 	}
 }
 
@@ -30,6 +30,6 @@ func (m *Metric) String() []string {
 		string(m.MessageType),
 		strconv.Itoa(int(m.Latency)),
 		strconv.Itoa(m.StatusCode),
-		m.RoomId,
+		m.RoomID,
 	}
 }

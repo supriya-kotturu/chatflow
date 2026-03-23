@@ -1,0 +1,93 @@
+@startuml
+namespace client {
+}
+namespace ws {
+    class "Client" << (S,Aquamarine) >> {
+        - expectedMessages atomic.Int32
+        - receivedMessages atomic.Int32
+        - roomChan <font color=blue>chan</font> *ConnElement
+        - mu *sync.RWMutex
+        - collectMetrics bool
+        - metricChan <font color=blue>chan</font> *models.Metric
+        - statsChan <font color=blue>chan</font> *models.RoomStats
+
+        + Pool *Pool
+        + RoomIDs []string
+        + UserIDs []string
+        + MessageCount atomic.Int32
+        + Wg *sync.WaitGroup
+        + CSVWriter *utils.CSVWriter
+
+        + GenerateConnElements(userId string) 
+        + GenerateMessages() 
+        + WriteMessages(ctx context.Context) 
+        + WriteMetricToChan(timestamp string, messageType models.MessageType, latency int64, statusCode int, roomId string) 
+        + CollectMetrics(ctx context.Context) 
+        + CloseChannels() 
+        + GetPerformanceMetricsSummary(wallTime time.Duration) 
+        + GetOverAllStats() 
+
+    }
+    class "ClientConfig" << (S,Aquamarine) >> {
+        + PoolSize int
+        + UserCount int
+        + MessageCount int
+        + RoomCount int
+        + MessageBuffer int
+        + CollectMetrics bool
+        + LogMessages bool
+        + OutputFolder string
+
+    }
+    class "ConnElement" << (S,Aquamarine) >> {
+        + UserID string
+        + RoomID string
+        + Messages []*models.Message
+        + Conn *WsClient
+
+    }
+    class "Pool" << (S,Aquamarine) >> {
+        + Conns <font color=blue>map</font>[string]*WsClient
+        + Sem <font color=blue>chan</font> <font color=blue>struct</font>{}
+        + Mu sync.RWMutex
+        + ServerHost string
+        + Port string
+        + MessageBuffer int
+
+        - getKey(userId string, roomId string) string
+
+        + CloseAll() 
+        + Remove(userId string, roomId string) 
+        + GetOrCreateNewWsClient(userId string, roomId string) (*WsClient, error)
+
+    }
+    class "PoolMetrics" << (S,Aquamarine) >> {
+        + TotalConnections atomic.Int64
+        + Reconnections atomic.Int64
+        + FailedConnections atomic.Int64
+        + SuccessfulMessages atomic.Int64
+        + FailedMessages atomic.Int64
+
+    }
+    class "WsClient" << (S,Aquamarine) >> {
+        - closeOnce sync.Once
+
+        + ChatRoomID string
+        + Conn *websocket.Conn
+        + Send <font color=blue>chan</font> *models.Response
+        + WriteMu sync.Mutex
+        + OwnerUser string
+        + Retries int
+
+        + Close() error
+        + Write(m *models.Message) error
+        + CloseSend() 
+        + Read() 
+
+    }
+}
+"ws.PoolMetrics" *-- "ws.Pool"
+
+
+
+@enduml

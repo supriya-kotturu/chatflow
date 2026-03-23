@@ -1,82 +1,26 @@
 # ChatFlow
 
-A real-time chat application built with Go and WebSockets. Includes load-testing clients that measure latency, throughput, and message distribution across concurrent users and rooms.
+Real-time WebSocket chat server with RabbitMQ fan-out for cross-server message delivery. Built for CS6650 Assignment 2.
 
-## Architecture
+## How it works
 
-```
-client/          Load-testing client library (connects N users to M rooms)
-  ws/            WebSocket client, connection pool, stats collection
-client-part1/    Fan-out load test entry point
-client-part2/    Pipeline load test entry point (500K → 2.5M messages)
-server/          WebSocket server
-  internal/      Room management, handlers, upgrader
-  html/          Static frontend (HTML/CSS/JS)
-pkg/
-  models/        Shared types (Message, Response, Metric, RoomStats)
-  generate/      Test data factories (users, rooms, messages)
-  env/           .env loader
-  utils/         CSV writer
-results/         Output metrics CSV per config and Jupyter notebook for analysis
-```
-
-Each user gets one WebSocket connection per room. The server echoes messages back with a server timestamp, and the client measures round-trip latency.
-
-## Threading Model
-
-See [THREADING.md](THREADING.md) for the full goroutine model, diagrams, and synchronization primitives for both server and client.
-
-## Load Test Patterns
-
-The client supports two concurrency patterns:
-
-### Fan-Out (`RunFanOutLoadTest`)
-
-Each user goroutine owns its full lifecycle — connections, writes, reads, and cleanup. Simple, no shared state between users.
+Clients connect via WebSocket. Each message is fanned out locally to all room members on the same server, and published to a RabbitMQ topic exchange so other servers in the cluster deliver it to their local clients.
 
 ```
-main
- ├── goroutine(user-1)
- │    ├── connect(room-1) → JOIN → write 1000 msgs → LEAVE → wait → close
- │    ├── connect(room-2) → JOIN → write 1000 msgs → LEAVE → wait → close
- │    └── ...
- ├── goroutine(user-2)
- │    ├── connect(room-1) → ...
- │    └── ...
- └── wg.Wait()
+Client → Server N
+           ├── local fan-out → all clients on Server N in that room
+           └── Publish → RabbitMQ (chat.exchange, routing key: room.<id>)
+                              ↓ routed to all server queues bound to room.<id>
+                         Server 1..N (self-filtered by ServerID)
+                              └── consume → broadcast → local clients
 ```
 
-### Pipeline (`RunPipelineLoadTest`)
-
-Three decoupled stages connected by channels. Separates connection setup from message I/O, and enables metric collection.
-
-```
-Stage 1: Generate               Stage 2: Write + Read          Stage 3: Collect
-┌─────────────────┐             ┌─────────────────────┐        ┌──────────────┐
-│ goroutine/user  │             │ goroutine/room      │        │              │
-│                 │  roomChan   │  ┌── writer ──────┐ │        │              │
-│ create conns +  ├────────────►│  │ send msgs      │ │        │              │
-│ pre-gen msgs    │             │  └────────────────┘ │ metric │  write to    │
-│                 │             │  ┌── reader ──────┐ ├───────►│  CSV file    │
-│                 │             │  │ collect latency │ │  Chan  │              │
-└─────────────────┘             │  │ compute stats  │ │        │              │
-                                │  └────────────────┘ │        └──────────────┘
-                                └─────────────────────┘
-                                         │
-                                    statsChan
-                                         │
-                                         ▼
-                                ┌─────────────────────┐
-                                │  GetOverAllStats()   │
-                                │  mean/median/p95/p99 │
-                                │  per-room breakdown  │
-                                └─────────────────────┘
-```
+See [docs/assignment2/ARCHITECTURE.md](docs/assignment2/ARCHITECTURE.md) for the full design.
 
 ## Prerequisites
 
 - Go 1.23+
-- Python 3 + matplotlib (optional, for charts)
+- RabbitMQ 4.0+ (AMQP 1.0)
 
 ## Setup
 
@@ -85,152 +29,51 @@ git clone <repo-url>
 cd chat-flow
 ```
 
-Create a `.env` file in the project root:
+Create `.env` in the project root:
 
 ```
-NAME="DEVELOPMENT"
+NAME=DEVELOPMENT
 PORT=3000
 SERVER_HOST=localhost
+RABBIT_HOST=localhost
+RABBIT_USER=guest
+RABBIT_PASSWORD=guest
+PUBLISH_WORKERS=20
+ROOM_COUNT=20
 ```
 
 ## Running
 
-### Build
-
 ```bash
-make build
-```
+# Build server
+make build-server-v2
 
-### Start the server
+# Start server
+make run-server-v2
 
-```bash
-make run-server
-```
-
-The server listens on the port from `.env` (default 3000). Open `http://localhost:3000` for the web UI.
-
-### Run the fan-out client (Part 1)
-
-```bash
-make run-client1
-```
-
-Default config (in `client-part1/main.go`):
-
-| Parameter      | Value | Description                          |
-|----------------|-------|--------------------------------------|
-| PoolSize       | 320   | Max concurrent WebSocket connections |
-| UserCount      | 32    | Number of simulated users            |
-| MessageCount   | 1000  | Messages per user per room           |
-| RoomCount      | 10    | Rooms each user joins                |
-| MessageBuffer  | 1250  | Channel buffer size                  |
-
-### Run the pipeline client (Part 2)
-
-```bash
+# Run load test (502K messages, 50 users/room, 500 msgs/user, 20 rooms)
 make run-client2
 ```
 
-Runs all 5 load test configurations sequentially (defined in `client-part2/main.go`):
+Output: per-room latency/throughput stats + aggregate percentiles printed on completion. Metrics written to `results-a2/metrics/<config>.csv`.
 
-| Config | Pool | Users | Messages | Rooms | Total Messages |
-|--------|------|-------|----------|-------|----------------|
-| 500K   | 1000 | 50    | 500      | 20    | 502,000        |
-| 1M     | 1000 | 100   | 1000     | 10    | 1,002,000      |
-| 1.5M   | 1000 | 100   | 750      | 20    | 1,504,000      |
-| 2M     | 2000 | 100   | 1000     | 20    | 2,004,000      |
-| 2.5M   | 2500 | 125   | 1000     | 20    | 2,505,000      |
+## Key Makefile targets
 
-The client prints per-room and aggregate stats on completion:
+| Target | Description |
+|--------|-------------|
+| `make build-server-v2` | Build the v2 server binary (with RabbitMQ) |
+| `make run-server-v2` | Build and start the v2 server |
+| `make run-client2` | Run the pipeline load test |
+| `make fmt` | Format all Go files |
+| `make vet` | Vet all Go files |
 
-```
-Mean Latency across all rooms: 609ms
-Median Latency across all rooms: 614ms
-95th Percentile Latency across all rooms: 870ms
-...
-Room 5 | users: 32 | throughput: 4821.3 msg/s | mean latency: 602ms | median latency: 611ms
-```
+## Docs
 
-### Analyze results
-
-Metrics are written to `results/<config>/metrics.csv`. Open the Jupyter notebook:
-
-```bash
-cd results
-jupyter notebook metrics.ipynb
-```
-
-## Deployment
-
-See [DEPLOYMENT.md](DEPLOYMENT.md) for instructions to build and deploy the server on AWS EC2.
-
-## Load Test Results
-
-See [RESULTS.md](RESULTS.md) for detailed load test results, insights, and recommendations.
-
-## Makefile targets
-
-| Target             | Description                          |
-|--------------------|--------------------------------------|
-| `make build`       | Build server and both client binaries |
-| `make build-server`| Build the server binary              |
-| `make build-client1`| Build the fan-out client binary     |
-| `make build-client2`| Build the pipeline client binary    |
-| `make run-server`  | Build and start the server           |
-| `make run-client1` | Build and run the fan-out client     |
-| `make run-client2` | Build and run the pipeline client    |
-| `make test`        | Run all tests                        |
-| `make fmt`         | Format all Go files                  |
-| `make vet`         | Vet all Go files                     |
-| `make clean`       | Remove built binaries                |
-
-## Project structure
-
-```
-.
-├── Makefile
-├── .env
-├── go.mod
-├── DEPLOYMENT.md          # EC2 deployment guide
-├── RESULTS.md             # Load test results and insights
-├── THREADING.md           # Goroutine model and sync primitives
-├── client/
-│   ├── loadtest.go         # RunFanOutLoadTest / RunPipelineLoadTest
-│   └── ws/
-│       ├── client.go       # Load test orchestration and stats
-│       ├── wsClient.go     # Single WebSocket connection wrapper
-│       └── pool.go         # Connection pool with semaphore
-├── client-part1/
-│   └── main.go             # Fan-out load test entry point
-├── client-part2/
-│   └── main.go             # Pipeline load test entry point (5 configs)
-├── server/
-│   ├── main.go             # Entry point
-│   ├── html/               # Static frontend
-│   └── internal/server/
-│       ├── server.go        # Room/client management
-│       ├── chatRoomHandler.go # WebSocket lifecycle handler
-│       ├── upgrader.go      # WebSocket upgrader config
-│       ├── healthHandler.go # Health check endpoint
-│       ├── homeHandler.go   # Landing page
-│       └── chatRoomPageHandler.go
-├── pkg/
-│   ├── models/
-│   │   ├── message.go       # Message type + validation
-│   │   ├── response.go      # Server response wrapper
-│   │   ├── metric.go        # CSV metric record
-│   │   └── roomStats.go     # Per-room latency/throughput stats
-│   ├── generate/
-│   │   └── generate.go      # Test data factories
-│   ├── env/
-│   │   └── environment.go   # .env loader
-│   └── utils/
-│       └── csvWriter.go     # Thread-safe CSV writer
-└── results/
-    ├── 500K/                # 500K config metrics
-    ├── 1M/                  # 1M config metrics
-    ├── 1_5M/                # 1.5M config metrics
-    ├── 2M/                  # 2M config metrics
-    ├── 2_5M/                # 2.5M config metrics
-    └── metrics.ipynb        # Analysis notebook (throughput + latency graphs)
-```
+| File | Contents |
+|------|----------|
+| [docs/assignment2/ARCHITECTURE.md](docs/assignment2/ARCHITECTURE.md) | System design, message flow, failure handling |
+| [docs/assignment2/REPORT.md](docs/assignment2/REPORT.md) | Full assignment report with tuning results |
+| [docs/assignment2/REPORT_SUMMARY.md](docs/assignment2/REPORT_SUMMARY.md) | Summary tables per tuning dimension |
+| [docs/assignment2/DESIGN_DECISIONS.md](docs/assignment2/DESIGN_DECISIONS.md) | Key design decisions and tradeoffs |
+| [docs/assignment2/TUNING.md](docs/assignment2/TUNING.md) | Run-by-run tuning log (Runs 1–25) |
+| [docs/assignment2/DEPLOYMENT.md](docs/assignment2/DEPLOYMENT.md) | AWS EC2 deployment guide |

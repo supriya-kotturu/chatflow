@@ -2,78 +2,77 @@ package main
 
 import (
 	"supriyakotturu.github.com/chatflow/client"
-	clientWs "supriyakotturu.github.com/chatflow/client/ws"
+	ws "supriyakotturu.github.com/chatflow/client/ws"
 )
 
 func main() {
-	configs := []*clientWs.ClientConfig{
-		{
-			PoolSize:      1,
-			UserCount:     1,
-			MessageCount:  1,
-			RoomCount:     1,
-			MessageBuffer: 1,
-		},
-		// 500K: 50 × (500+2) × 20 = 502,000 messages
+	// 500K baseline: 1000 connections, 50 users/room, 500 msgs/user, 20 rooms
+	// Total = 50 × 500 × 20 = 500,000 messages (+2K join/leave ≈ 502K)
+	// MessageBuffer = users/room × msgs/user + margin = 50 × 500 = 25,000 → 60,000 with margin
+	configs := []*ws.ClientConfig{
+		// {
+		// 	PoolSize:       16,
+		// 	UserCount:      50,
+		// 	MessageCount:   500,
+		// 	RoomCount:      20,
+		// 	MessageBuffer:  60000,
+		// 	CollectMetrics: true,
+		// 	OutputFile:     "results-a2/metrics/500K_pool16.csv",
+		// },
+		// {
+		// 	PoolSize:       32,
+		// 	UserCount:      50,
+		// 	MessageCount:   500,
+		// 	RoomCount:      20,
+		// 	MessageBuffer:  60000,
+		// 	CollectMetrics: true,
+		// 	OutputFile:     "results-a2/metrics/500K_pool32.csv",
+		// },
 		{
 			PoolSize:       1000,
 			UserCount:      50,
 			MessageCount:   500,
 			RoomCount:      20,
-			MessageBuffer:  1200,
+			MessageBuffer:  60000,
 			CollectMetrics: true,
-			OutputFolder:   "results/500K",
+			OutputFile:     "results-a2/metrics/5W_4S_500K_pool1000.csv",
 		},
-		// 1M: 100 × (1000+2) × 10 = 1,002,000 messages
-		{
-			PoolSize:       1000,
-			UserCount:      100,
-			MessageCount:   1000,
-			RoomCount:      10,
-			MessageBuffer:  1200,
-			CollectMetrics: true,
-			OutputFolder:   "results/1M",
-		},
-		// 1.5M: 100 × (750+2) × 20 = 1,504,000 messages
-		{
-			PoolSize:       1000,
-			UserCount:      100,
-			MessageCount:   750,
-			RoomCount:      20,
-			MessageBuffer:  3000,
-			CollectMetrics: true,
-			OutputFolder:   "results/1_5M",
-		},
-		// 2M: 100 × (1000+2) × 20 = 2,004,000 messages
-		{
-			PoolSize:       2000,
-			UserCount:      100,
-			MessageCount:   1000,
-			RoomCount:      20,
-			MessageBuffer:  2500,
-			CollectMetrics: true,
-			OutputFolder:   "results/2M",
-		},
-		// 2.5M: 125 × (1000+2) × 20 = 2,505,000 messages
-		{
-			PoolSize:       2500,
-			UserCount:      125,
-			MessageCount:   1000,
-			RoomCount:      20,
-			MessageBuffer:  3000,
-			CollectMetrics: true,
-			OutputFolder:   "results/2_5M",
-		},
-		// 3.5M: 175 × (1000+2) × 20 = 3,507,000 messages
-		{
-			PoolSize:       3500,
-			UserCount:      175,
-			MessageCount:   1000,
-			RoomCount:      20,
-			MessageBuffer:  3500,
-			CollectMetrics: true,
-			OutputFolder:   "results/3_5M",
-		},
+		// {
+		// 	PoolSize:       128,
+		// 	UserCount:      50,
+		// 	MessageCount:   500,
+		// 	RoomCount:      20,
+		// 	MessageBuffer:  60000,
+		// 	CollectMetrics: true,
+		// 	OutputFile:     "results-a2/metrics/500K_pool128.csv",
+		// },
+		// {
+		// 	PoolSize:       256,
+		// 	UserCount:      50,
+		// 	MessageCount:   500,
+		// 	RoomCount:      20,
+		// 	MessageBuffer:  60000,
+		// 	CollectMetrics: true,
+		// 	OutputFile:     "results-a2/metrics/500K_pool256.csv",
+		// },
+		// {
+		// 	PoolSize:       512,
+		// 	UserCount:      50,
+		// 	MessageCount:   500,
+		// 	RoomCount:      20,
+		// 	MessageBuffer:  60000,
+		// 	CollectMetrics: true,
+		// 	OutputFile:     "results-a2/metrics/500K_pool512.csv",
+		// },
+		// {
+		// 	PoolSize:       1024,
+		// 	UserCount:      50,
+		// 	MessageCount:   500,
+		// 	RoomCount:      20,
+		// 	MessageBuffer:  60000,
+		// 	CollectMetrics: true,
+		// 	OutputFile:     "results-a2/metrics/500K_pool1024.csv",
+		// },
 	}
 
 	for _, cfg := range configs {
