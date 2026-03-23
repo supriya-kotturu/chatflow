@@ -38,7 +38,7 @@ type Rabbit struct {
 	exchangeName    string
 	tempBuffer      chan *pendingMessage // secondary buffer used during reconnection
 	publishChan     chan *pendingMessage // primary async publish queue
-	conn            *rmq.AmqpConnection  // publisher connection
+	publisherConn   *rmq.AmqpConnection  // publisher connection
 	consumerConn    *rmq.AmqpConnection  // separate consumer connection
 	consumers       map[string]*rmq.Consumer
 	handlers        map[string]func([]byte) // roomId → message handler, registered by Consume()
@@ -76,7 +76,7 @@ func NewRabbitMQ(ctx context.Context, serverId string, tempBufferSize int, publi
 	// Create two AMQP connections: one for publishers, one for consumers.
 	// Separating them prevents publish traffic from starving consumer ack roundtrips.
 	environment := rmq.NewEnvironment(rmqUrl.String(), nil)
-	conn, err := environment.NewConnection(ctx)
+	publisherConn, err := environment.NewConnection(ctx)
 	if err != nil {
 		rmq.Error("Error opening publisher connection", err)
 		return nil, err
@@ -90,11 +90,11 @@ func NewRabbitMQ(ctx context.Context, serverId string, tempBufferSize int, publi
 
 	// Subscribe to state changes on both connections.
 	// Used to flush tempBuffer on reconnect; gobreaker handles publish-failure detection.
-	conn.NotifyStatusChange(stateChanged)
+	publisherConn.NotifyStatusChange(stateChanged)
 	consumerConn.NotifyStatusChange(stateChanged)
 
 	// Create a Topic Exchange
-	management := conn.Management()
+	management := publisherConn.Management()
 	exchange := &rmq.TopicExchangeSpecification{
 		Name: exchangeName,
 	}
@@ -154,16 +154,16 @@ func NewRabbitMQ(ctx context.Context, serverId string, tempBufferSize int, publi
 	})
 
 	rabbit := &Rabbit{
-		serverID:     serverId,
-		exchangeName: exchangeName,
-		tempBuffer:   make(chan *pendingMessage, tempBufferSize),
-		publishChan:  make(chan *pendingMessage, publishChanSize),
-		conn:         conn,
-		consumerConn: consumerConn,
-		stateChanged: stateChanged,
-		consumers:    consumers,
-		handlers:     make(map[string]func([]byte)),
-		cb:           cb,
+		serverID:      serverId,
+		exchangeName:  exchangeName,
+		tempBuffer:    make(chan *pendingMessage, tempBufferSize),
+		publishChan:   make(chan *pendingMessage, publishChanSize),
+		publisherConn: publisherConn,
+		consumerConn:  consumerConn,
+		stateChanged:  stateChanged,
+		consumers:     consumers,
+		handlers:      make(map[string]func([]byte)),
+		cb:            cb,
 	}
 
 	// Start publish worker goroutines, each with its own dedicated publisher
@@ -171,7 +171,7 @@ func NewRabbitMQ(ctx context.Context, serverId string, tempBufferSize int, publi
 	// 30 workers balances WebSocket throughput against back-pressure.
 	numPublishWorkers := e.PublishWorkers
 	for range numPublishWorkers {
-		pub, err := conn.NewPublisher(ctx, nil, nil)
+		pub, err := publisherConn.NewPublisher(ctx, nil, nil)
 		if err != nil {
 			rmq.Error("Error creating publisher for worker", err)
 			return nil, err
@@ -221,6 +221,10 @@ func NewRabbitMQ(ctx context.Context, serverId string, tempBufferSize int, publi
 
 				// Accept in a separate goroutine so the receive loop can immediately
 				// call Receive() again, keeping AMQP credits flowing back to the broker.
+				// Each Receive() call returns a new, distinct d. That's why d := delivery
+				// is copied before the goroutine — without that copy, by the time the
+				// goroutine runs, the outer loop may have already overwritten delivery
+				// with the next message.
 				d := delivery
 				go func() {
 					if err := d.Accept(ctx); err != nil {

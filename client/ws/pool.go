@@ -2,8 +2,10 @@ package ws
 
 import (
 	"log"
+	"math/rand"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -69,6 +71,43 @@ func (p *Pool) Remove(userId string, roomId string) {
 
 func (p *Pool) getKey(userId, roomId string) string {
 	return userId + ":" + roomId
+}
+
+// Reconnect closes the current connection for userId:roomId and opens a fresh
+// one, keeping the semaphore slot so the pool size stays consistent.
+// A small random jitter (0–200ms) is applied before dialing to desynchronize
+// reconnect bursts when many users finish a sub-session at the same time.
+func (p *Pool) Reconnect(userId, roomId string) (*WsClient, error) {
+	time.Sleep(time.Duration(rand.Intn(200)) * time.Millisecond)
+	key := p.getKey(userId, roomId)
+
+	p.Mu.Lock()
+	old, hadConn := p.Conns[key]
+	if hadConn {
+		old.Conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		_ = old.Close()
+		delete(p.Conns, key)
+	}
+	p.Mu.Unlock()
+
+	c, err := NewWsClient(p.MessageBuffer, p.ServerHost, p.Port, roomId)
+	if err != nil {
+		if hadConn {
+			<-p.Sem // release the slot we were holding
+		}
+		p.FailedConnections.Add(1)
+		return nil, err
+	}
+
+	p.Reconnections.Add(1)
+	c.OwnerUser = userId
+
+	p.Mu.Lock()
+	p.Conns[key] = c
+	p.Mu.Unlock()
+
+	return c, nil
 }
 
 // GetOrCreateNewWsClient returns an existing connection or creates a new one.

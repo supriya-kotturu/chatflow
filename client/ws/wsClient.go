@@ -34,7 +34,7 @@ func NewWsClient(messageBuffer int, host string, port string, roomId string) (*W
 	dialer := websocket.DefaultDialer
 
 	maxRetries := 5
-	backoff := 1 * time.Second
+	backoff := 2 * time.Second
 	var conn *websocket.Conn
 	var err error
 	retries := 0

@@ -22,12 +22,13 @@ import (
 	"supriyakotturu.github.com/chatflow/pkg/utils"
 )
 
-// ConnElement groups a user's connection and pre-generated messages for one room.
+// ConnElement groups a user's connection and pre-generated sub-sessions for one room.
+// Each sub-session is a slice of messages starting with JOIN and ending with LEAVE.
 type ConnElement struct {
-	UserID   string
-	RoomID   string
-	Messages []*models.Message
-	Conn     *WsClient
+	UserID      string
+	RoomID      string
+	SubSessions [][]*models.Message
+	Conn        *WsClient
 }
 
 // Client orchestrates the load test: connection pooling, message generation,
@@ -100,8 +101,9 @@ func NewClient(cf *ClientConfig) *Client {
 	return client
 }
 
-// GenerateConnElements creates a ConnElement per room for the given user
-// (JOIN + MessageCount TEXT messages + LEAVE) and sends each to roomChan.
+// GenerateConnElements creates a ConnElement per room for the given user.
+// Messages follow a 5-90-5 JOIN/TEXT/LEAVE distribution split into sub-sessions,
+// each bounded by JOIN…LEAVE so the server connection lifecycle is respected.
 func (c *Client) GenerateConnElements(userId string) {
 	for _, roomId := range c.RoomIDs {
 		userConn, err := c.Pool.GetOrCreateNewWsClient(userId, roomId)
@@ -110,22 +112,37 @@ func (c *Client) GenerateConnElements(userId string) {
 			continue
 		}
 
-		messages := make([]*models.Message, 0, int(c.MessageCount.Load())+2)
-		messages = append(messages, generate.NewJoinMessage(userId, roomId))
-		for i := 0; i < int(c.MessageCount.Load()); i++ {
-			messages = append(messages, generate.NewMessage(userId))
-		}
-		messages = append(messages, generate.NewLeaveMessage(userId, roomId))
+		flat := generate.NewSessionMessages(userId, int(c.MessageCount.Load()))
+		subSessions := splitIntoSubSessions(flat)
 
 		conn := &ConnElement{
-			UserID:   userId,
-			RoomID:   roomId,
-			Messages: messages,
-			Conn:     userConn,
+			UserID:      userId,
+			RoomID:      roomId,
+			SubSessions: subSessions,
+			Conn:        userConn,
 		}
 
 		c.roomChan <- conn
 	}
+}
+
+// splitIntoSubSessions partitions a flat message slice into sub-slices, each
+// ending at a LEAVE message. This mirrors the server's connection lifecycle:
+// LEAVE closes the handler, so each sub-session needs its own connection.
+func splitIntoSubSessions(msgs []*models.Message) [][]*models.Message {
+	var sessions [][]*models.Message
+	var current []*models.Message
+	for _, m := range msgs {
+		current = append(current, m)
+		if m.MessageType == models.MessageTypeLeave {
+			sessions = append(sessions, current)
+			current = nil
+		}
+	}
+	if len(current) > 0 {
+		sessions = append(sessions, current)
+	}
+	return sessions
 }
 
 // GenerateMessages spawns a goroutine per user to generate ConnElements
@@ -146,9 +163,20 @@ func (c *Client) GenerateMessages() {
 	wg.Wait()
 }
 
+// sessionResult holds stats collected by one per-session reader goroutine.
+type sessionResult struct {
+	latencies []int64
+	total     int64
+	received  int
+	msgTypes  map[models.MessageType]int
+	usersSeen map[string]struct{}
+}
+
 // WriteMessages consumes ConnElements from roomChan. For each element it
-// starts a reader goroutine that collects latency stats, then writes all
-// messages to the server and waits for the reader to finish.
+// iterates sub-sessions: spawns a per-session reader, writes all messages,
+// waits for the reader to finish (connection closes after LEAVE), then
+// reconnects for the next sub-session. Stats are aggregated across all
+// sub-sessions and sent once to statsChan.
 func (c *Client) WriteMessages(ctx context.Context) {
 	for room := range c.roomChan {
 		c.Wg.Add(1)
@@ -157,127 +185,135 @@ func (c *Client) WriteMessages(ctx context.Context) {
 			defer c.Wg.Done()
 			defer c.Pool.Remove(room.UserID, room.RoomID)
 
-			readDone := make(chan struct{})
-			go func() {
-				defer close(readDone)
-				usersSeenSending := make(map[string]struct{})
-				received := 0
-				var totalLatency int64
-				latencies := make([]int64, 0, len(room.Messages))
-				startTime := time.Now()
-				messageTypes := make(map[models.MessageType]int)
+			startTime := time.Now()
+			var allLatencies []int64
+			var totalLatency int64
+			allReceived := 0
+			messageTypes := make(map[models.MessageType]int)
+			usersSeenSending := make(map[string]struct{})
 
-				sendStats := func() {
-					n := len(latencies)
-					if n == 0 {
-						return
+		sessionLoop:
+			for i, session := range room.SubSessions {
+				if i > 0 {
+					newConn, err := c.Pool.Reconnect(room.UserID, room.RoomID)
+					if err != nil {
+						log.Printf("User %s reconnect failed for room %s: %v", room.UserID, room.RoomID, err)
+						break sessionLoop
 					}
-					sort.Slice(latencies, func(i, j int) bool {
-						return latencies[i] < latencies[j]
-					})
-					actualExpected := len(usersSeenSending) * len(room.Messages)
-					stats := &models.RoomStats{
-						RoomID:              room.RoomID,
-						UserID:              room.UserID,
-						MessageCount:        received,
-						MeanLatency:         totalLatency / int64(n),
-						MedianLatency:       latencies[n/2],
-						Percentile95Latency: latencies[int(float64(n)*0.95)],
-						Percentile99Latency: latencies[int(float64(n)*0.99)],
-						MinLatency:          latencies[0],
-						MaxLatency:          latencies[n-1],
-						ThroughPut:          float64(n) / time.Since(startTime).Seconds(),
-						MessageTypes:        messageTypes,
-					}
-					c.statsChan <- stats
-					log.Printf("DONE: User %s in room %s: received %d/%d", room.UserID, room.RoomID, received, actualExpected)
+					room.Conn = newConn
 				}
 
-				for {
-					select {
-					case resp, ok := <-room.Conn.Send:
-						if !ok {
-							sendStats()
-							return
-						}
+				resultCh := make(chan sessionResult, 1)
+				conn := room.Conn
 
-						received++
-						messageTypes[resp.MessageType]++
-
+				// Per-session reader: drains Send until the connection closes
+				// (server closes after LEAVE). Writer owns termination via
+				// the connection lifecycle — no LEAVE-echo detection needed.
+				go func(wsConn *WsClient) {
+					res := sessionResult{
+						msgTypes:  make(map[models.MessageType]int),
+						usersSeen: make(map[string]struct{}),
+					}
+					for resp := range wsConn.Send {
+						res.received++
+						res.msgTypes[resp.MessageType]++
 						if resp.MessageType == models.MessageTypeJoin {
-							usersSeenSending[resp.UserID] = struct{}{}
+							res.usersSeen[resp.UserID] = struct{}{}
 						}
-
-						sendTime, sendTimeErr := time.Parse(time.RFC3339Nano, resp.Timestamp)
-						if sendTimeErr == nil {
+						sendTime, err := time.Parse(time.RFC3339Nano, resp.Timestamp)
+						if err == nil {
 							latency := time.Since(sendTime).Milliseconds()
-							latencies = append(latencies, latency)
-							totalLatency += latency
-
+							res.latencies = append(res.latencies, latency)
+							res.total += latency
 							if c.collectMetrics {
 								c.WriteMetricToChan(resp.Message.Timestamp, resp.Message.MessageType, latency, resp.Status, room.RoomID)
 							}
 						}
+					}
+					resultCh <- res
+				}(conn)
 
-						// Terminate when own LEAVE echo is received — one per connection.
-						if resp.MessageType == models.MessageTypeLeave && resp.UserID == room.UserID {
-							sendStats()
-							return
+				maxRetries := 5
+				writeOk := true
+
+			writeLoop:
+				for _, m := range session {
+					backoff := 2 * time.Second
+
+					for attempt := 0; attempt < maxRetries; attempt++ {
+						m.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
+						err := room.Conn.Write(m)
+
+						if err == nil {
+							c.Pool.SuccessfulMessages.Add(1)
+							break
 						}
 
-					case <-ctx.Done():
-						actualExpected := len(usersSeenSending) * len(room.Messages)
-						log.Printf("User %s in room %s timed out: %d/%d",
-							room.UserID, room.RoomID, received, actualExpected)
-						sendStats()
-						return
+						var netErr *net.OpError
+						if errors.As(err, &netErr) || websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
+							c.Pool.FailedConnections.Add(1)
+							log.Printf("User %s connection to room %s lost: %+v", room.UserID, room.RoomID, err)
+							writeOk = false
+							break writeLoop
+						}
+
+						fmt.Printf("attempt %d failed message write: %v, retrying in %v...\n", attempt+1, err, backoff)
+
+						select {
+						case <-time.After(backoff):
+						case <-ctx.Done():
+							writeOk = false
+							break writeLoop
+						}
+
+						backoff *= 2
+						if attempt == maxRetries-1 {
+							c.Pool.FailedMessages.Add(1)
+							log.Printf("User %s write to room %s error: %+v", room.UserID, room.RoomID, err)
+						}
 					}
 				}
-			}()
 
-			maxRetries := 5
+				// Always wait for the reader — even on write failure the connection
+				// will close and drain, preventing a goroutine leak.
+				res := <-resultCh
 
-			// Write messages to the server
-			for _, m := range room.Messages {
-				backoff := 1 * time.Second
-				retries := 0
+				allLatencies = append(allLatencies, res.latencies...)
+				totalLatency += res.total
+				allReceived += res.received
+				for mt, count := range res.msgTypes {
+					messageTypes[mt] += count
+				}
+				for uid := range res.usersSeen {
+					usersSeenSending[uid] = struct{}{}
+				}
 
-				for attempt := 0; attempt < maxRetries; attempt++ {
-					m.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
-					err := room.Conn.Write(m)
-
-					if err == nil {
-						c.Pool.SuccessfulMessages.Add(1)
-						break
-					}
-
-					// if the connection to the server is lost, don't retry on the closed connection
-					// abandon the writes instead.
-					var netErr *net.OpError
-					if errors.As(err, &netErr) || websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
-						c.Pool.FailedConnections.Add(1)
-						log.Printf("User %s connection to room %s lost: %+v", room.UserID, room.RoomID, err)
-						return
-					}
-
-					retries = attempt + 1
-					fmt.Printf("attempt %d failed message write: %v, retrying in %v...\n", retries, err, backoff)
-
-					select {
-					case <-time.After(backoff):
-					case <-ctx.Done():
-						return
-					}
-
-					backoff *= 2
-					if attempt == maxRetries-1 {
-						c.Pool.FailedMessages.Add(1)
-						log.Printf("User %s write to room %s error: %+v", room.UserID, room.RoomID, err)
-					}
+				if !writeOk {
+					break sessionLoop
 				}
 			}
 
-			<-readDone
+			n := len(allLatencies)
+			if n == 0 {
+				return
+			}
+			sort.Slice(allLatencies, func(i, j int) bool { return allLatencies[i] < allLatencies[j] })
+			stats := &models.RoomStats{
+				RoomID:              room.RoomID,
+				UserID:              room.UserID,
+				MessageCount:        allReceived,
+				MeanLatency:         totalLatency / int64(n),
+				MedianLatency:       allLatencies[n/2],
+				Percentile95Latency: allLatencies[int(float64(n)*0.95)],
+				Percentile99Latency: allLatencies[int(float64(n)*0.99)],
+				MinLatency:          allLatencies[0],
+				MaxLatency:          allLatencies[n-1],
+				ThroughPut:          float64(n) / time.Since(startTime).Seconds(),
+				MessageTypes:        messageTypes,
+			}
+			c.statsChan <- stats
+			log.Printf("DONE: User %s in room %s: received %d across %d sessions",
+				room.UserID, room.RoomID, allReceived, len(room.SubSessions))
 		}(room)
 	}
 }
