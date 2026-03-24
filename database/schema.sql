@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS user_rooms (
     user_id TEXT NOT NULL,
     room_id TEXT NOT NULL,
-    last_activity TIMESTAMPTZ NOT NULL,
+    last_activity_timestamp TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (user_id, room_id)
 );
 
@@ -25,12 +25,12 @@ CREATE TABLE IF NOT EXISTS message_stats(
     message_count BIGINT DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS user_stats(
+CREATE TABLE IF NOT EXISTS user_message_stats(
     user_id TEXT PRIMARY KEY,
     message_count BIGINT DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS room_stats(
+CREATE TABLE IF NOT EXISTS room_message_stats(
     room_id TEXT PRIMARY KEY,
     message_count BIGINT DEFAULT 0
 );

@@ -7,6 +7,7 @@ import (
 	"os/signal"
 
 	"supriyakotturu.github.com/chatflow/consumer-v3/consumer"
+	"supriyakotturu.github.com/chatflow/consumer-v3/metrics"
 )
 
 const (
@@ -30,6 +31,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	metricsServer := metrics.NewServer(ctx, c.DBConn)
+	go metricsServer.Start(":8080")
+
 	c.Start()
 	<-ctx.Done()
+	fmt.Println("Shutting down...")
 }

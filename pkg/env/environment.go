@@ -44,6 +44,7 @@ type ConsumerEnv struct {
 	DBWorkers       int
 	BatchSize       int
 	FlushInterval   int
+	MetricsPort     int
 }
 
 // atoiWithDefault converts a string to an integer, returning a default value if conversion fails.
@@ -165,6 +166,7 @@ func LoadConsumerEnv() (*ConsumerEnv, error) {
 	dbWorkers := os.Getenv("DB_WORKERS")
 	batchSize := os.Getenv("BATCH_SIZE")
 	flushInterval := os.Getenv("FLUSH_INTERVAL")
+	metricsPort := os.Getenv("METRICS_PORT")
 
 	return &ConsumerEnv{
 		RabbitEnv:       *rabbit,
@@ -174,5 +176,6 @@ func LoadConsumerEnv() (*ConsumerEnv, error) {
 		DBWorkers:       atoiWithDefault(dbWorkers, 5),
 		BatchSize:       atoiWithDefault(batchSize, 500),
 		FlushInterval:   atoiWithDefault(flushInterval, 100),
+		MetricsPort:     atoiWithDefault(metricsPort, 8080),
 	}, nil
 }
