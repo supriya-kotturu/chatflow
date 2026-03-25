@@ -29,13 +29,13 @@ func main() {
 		// 	OutputFile:     "results-a2/metrics/500K_pool32.csv",
 		// },
 		{
-			PoolSize:       1000,
-			UserCount:      50,
-			MessageCount:   500,
-			RoomCount:      20,
-			MessageBuffer:  60000,
-			CollectMetrics: true,
-			OutputFile:     "results-a2/metrics/5W_4S_500K_pool1000.csv",
+			PoolSize:      128,
+			UserCount:     50,
+			MessageCount:  9360,
+			RoomCount:     20,
+			MessageBuffer: 1120000,
+			// CollectMetrics: true,
+			// OutputFile:     "results-a2/metrics/5W_4S_500K_pool1000.csv",
 		},
 		// {
 		// 	PoolSize:       128,
@@ -77,5 +77,6 @@ func main() {
 
 	for _, cfg := range configs {
 		client.RunPipelineLoadTest(cfg)
+
 	}
 }
