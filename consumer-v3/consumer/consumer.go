@@ -3,6 +3,7 @@ package consumer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/url"
@@ -118,9 +119,12 @@ func NewConsumer(cf *ConsumerConfig) (*Consumer, error) {
 	// DB connection
 	dbUser := url.UserPassword(e.DBUser, e.DBPassword)
 	dbAddr := net.JoinHostPort(e.DBHost, e.DBPort)
-	dbUrl := url.URL{Scheme: "postgres", User: dbUser, Host: dbAddr, Path: "/" + e.DBName}
+	dbUrl := url.URL{Scheme: "postgres", User: dbUser, Host: dbAddr, Path: "/" + e.DBName, RawQuery: "search_path=chatflow"}
 
-	dbConn, err := pgxpool.New(cf.Ctx, dbUrl.String())
+	poolConfig, _ := pgxpool.ParseConfig(dbUrl.String())
+	poolConfig.ConnConfig.RuntimeParams["search_path"] = "chatflow"
+	poolConfig.MaxConns = int32(e.DBWorkers + e.StatsWorkers + 2) // headroom for metrics queries
+	dbConn, err := pgxpool.NewWithConfig(cf.Ctx, poolConfig)
 	if err != nil {
 		log.Println("Error initiating the DB connection.")
 		return nil, err
@@ -183,6 +187,9 @@ func (c *Consumer) ConsumeMessage(msg []byte) {
 }
 
 func (c *Consumer) ConsumeFromRmq(rmqConsumer *rmq.Consumer) {
+	var lagCount int
+	var lagTotal time.Duration
+
 	for {
 		delivery, err := rmqConsumer.Receive(c.Ctx)
 		if err != nil {
@@ -199,18 +206,23 @@ func (c *Consumer) ConsumeFromRmq(rmqConsumer *rmq.Consumer) {
 		data := delivery.Message().GetData()
 		if err := json.Unmarshal(data, &lagMsg); err == nil {
 			if t, err := time.Parse(time.RFC3339Nano, lagMsg.Timestamp); err == nil {
-				lag := time.Since(t)
-				log.Printf("Message lag: %s\n", lag)
+				lagTotal += time.Since(t)
+				lagCount++
+				if lagCount >= 5000 {
+					log.Printf("Avg message lag (last 5000): %s\n", lagTotal/time.Duration(lagCount))
+					lagCount = 0
+					lagTotal = 0
+				}
 			}
 		}
 
-		c.ConsumeMessage(data)
 		d := delivery
 		go func() {
 			if err := d.Accept(c.Ctx); err != nil {
 				rmq.Error("Error accepting the message", err)
 			}
 		}()
+		c.ConsumeMessage(data)
 	}
 }
 
@@ -245,7 +257,10 @@ func (c *Consumer) getUserRoomDetails(batch []*models.QueueMessage) *userRoomDet
 	return details
 }
 
-func (c *Consumer) writeBatchToDB(batch []*models.QueueMessage) error {
+// writeBatchToDB writes a batch to the DB with retries and circuit breaker.
+// If sendToDLQ is false (DLQ drain path), a final failure is logged and discarded
+// instead of re-queuing — preventing an infinite bounce cycle.
+func (c *Consumer) writeBatchToDB(batch []*models.QueueMessage, sendToDLQ bool) error {
 	userRooms := c.getUserRoomDetails(batch)
 	maxRetries := 5
 	backoff := 2 * time.Second
@@ -264,7 +279,11 @@ func (c *Consumer) writeBatchToDB(batch []*models.QueueMessage) error {
 			[]string{"message_id", "user_id", "room_id", "server_id", "username", "content", "message_type", "timestamp"},
 			pgx.CopyFromSlice(len(batch), func(i int) ([]any, error) {
 				m := batch[i]
-				return []any{m.MessageID, m.Message.UserID, m.RoomID, m.ServerID, m.Message.Username, m.Message.Message, m.Message.MessageType, m.Timestamp}, nil
+				ts, err := time.Parse(time.RFC3339Nano, m.Timestamp)
+				if err != nil {
+					return nil, fmt.Errorf("invalid timestamp %q: %w", m.Timestamp, err)
+				}
+				return []any{m.MessageID, m.Message.UserID, m.RoomID, m.ServerID, m.Message.Username, m.Message.Message, string(m.Message.MessageType), ts}, nil
 			}))
 
 		if err != nil {
@@ -299,9 +318,13 @@ func (c *Consumer) writeBatchToDB(batch []*models.QueueMessage) error {
 	}
 
 	if c.cb.State() == gobreaker.StateOpen {
-		select {
-		case c.DLQChan <- batch:
-		case <-c.Ctx.Done():
+		if sendToDLQ {
+			select {
+			case c.DLQChan <- batch:
+			case <-c.Ctx.Done():
+			}
+		} else {
+			log.Printf("[dlq] circuit open, discarding batch of %d", len(batch))
 		}
 		return gobreaker.ErrOpenState
 	}
@@ -326,9 +349,13 @@ func (c *Consumer) writeBatchToDB(batch []*models.QueueMessage) error {
 		log.Printf("attempt %d failed writing batch to DB: %v, retrying in %v...\n", attempt+1, lastErr, backoff)
 	}
 
-	select {
-	case c.DLQChan <- batch:
-	case <-c.Ctx.Done():
+	if sendToDLQ {
+		select {
+		case c.DLQChan <- batch:
+		case <-c.Ctx.Done():
+		}
+	} else {
+		log.Printf("[dlq] discarding batch of %d after retry failure: %v", len(batch), lastErr)
 	}
 
 	return lastErr
@@ -341,13 +368,9 @@ func (c *Consumer) WriteToDB() {
 	for {
 		select {
 		case dlqBatch := <-c.DLQChan:
-			log.Printf("Received batch of %d messages in DLQ channel.\n", len(dlqBatch))
-			if err := c.writeBatchToDB(dlqBatch); err != nil {
-				log.Printf("Error writing batch to DB from DLQ channel: %s", err)
-				// When you pull a batch from DLQChan and call writeBatchToDB on it, if that also fails,
-				// writeBatchToDB pushes it back to DLQChan. Next iteration pulls it off again.
-				// Infinite cycle while the DB is down.
-				// Fix: on the DLQ retry path, if it fails, log and discard the batch
+			log.Printf("[dlq] retrying batch of %d\n", len(dlqBatch))
+			if err := c.writeBatchToDB(dlqBatch, false); err != nil {
+				log.Printf("[dlq] discarding batch of %d: %v", len(dlqBatch), err)
 			}
 		default:
 		}
@@ -356,13 +379,13 @@ func (c *Consumer) WriteToDB() {
 		case msg := <-c.DBChan:
 			batch = append(batch, msg)
 		case dlqBatch := <-c.DLQChan:
-			if err := c.writeBatchToDB(dlqBatch); err != nil {
-				log.Printf("Error writing batch to DB: %s", err)
-				// On the DLQ retry path, if it fails, log and discard the batch
+			log.Printf("[dlq] retrying batch of %d\n", len(dlqBatch))
+			if err := c.writeBatchToDB(dlqBatch, false); err != nil {
+				log.Printf("[dlq] discarding batch of %d: %v", len(dlqBatch), err)
 			}
 		case <-ticker.C:
 			if len(batch) > 0 {
-				if err := c.writeBatchToDB(batch); err != nil {
+				if err := c.writeBatchToDB(batch, true); err != nil {
 					log.Printf("Error writing batch to DB: %s", err)
 					batch = batch[:0]
 					continue
@@ -374,7 +397,7 @@ func (c *Consumer) WriteToDB() {
 		}
 
 		if len(batch) >= c.bulkSize {
-			if err := c.writeBatchToDB(batch); err != nil {
+			if err := c.writeBatchToDB(batch, true); err != nil {
 				log.Printf("Error writing batch to DB: %s", err)
 				batch = batch[:0]
 				continue
@@ -403,74 +426,60 @@ func (c *Consumer) writeStatsToDB(batch []*models.QueueMessage) error {
 	for _, msg := range batch {
 		ts, err := time.Parse(time.RFC3339Nano, msg.Timestamp)
 		if err != nil {
-			log.Printf("Error parsing timestamp: %s", err)
 			continue
 		}
-
-		bucket := ts.Truncate(time.Minute)
-		minuteBucket[bucket]++
+		minuteBucket[ts.Truncate(time.Minute)]++
 		userMessagesMap[msg.Message.UserID]++
 		roomMessagesMap[msg.RoomID]++
 	}
 
-	// Create a transaction and Rollback if the bulk write fails.
 	tx, err := c.DBConn.Begin(c.Ctx)
 	if err != nil {
-		log.Printf("Error creating a transaction")
+		log.Printf("[stats] begin tx: %s", err)
 		return err
 	}
 
-	// Unnest message stats
 	minuteBuckets, count := getKeysAndValues(minuteBucket)
-	_, err = tx.Exec(c.Ctx, `
+	if _, err := tx.Exec(c.Ctx, `
 		INSERT INTO message_stats (bucket, message_count)
 		SELECT * FROM UNNEST($1::timestamptz[], $2::bigint[])
 		ON CONFLICT (bucket) DO UPDATE
 		SET message_count = message_stats.message_count + EXCLUDED.message_count`,
-		minuteBuckets, count)
-
-	if err != nil {
+		minuteBuckets, count); err != nil {
 		tx.Rollback(c.Ctx)
-		log.Printf("Error inserting into message_stats: %s", err)
+		log.Printf("[stats] message_stats: %s", err)
 		return err
 	}
 
-	// Unnest
 	userIds, count := getKeysAndValues(userMessagesMap)
-	_, err = tx.Exec(c.Ctx, `
+	if _, err := tx.Exec(c.Ctx, `
 		INSERT INTO user_message_stats (user_id, message_count)
 		SELECT * FROM UNNEST($1::text[], $2::bigint[])
 		ON CONFLICT (user_id) DO UPDATE
 		SET message_count = user_message_stats.message_count + EXCLUDED.message_count`,
-		userIds, count)
-
-	if err != nil {
+		userIds, count); err != nil {
 		tx.Rollback(c.Ctx)
-		log.Printf("Error inserting into user_message_stats: %s", err)
+		log.Printf("[stats] user_message_stats: %s", err)
 		return err
 	}
 
 	roomIds, count := getKeysAndValues(roomMessagesMap)
-	_, err = tx.Exec(c.Ctx, `
+	if _, err := tx.Exec(c.Ctx, `
 		INSERT INTO room_message_stats (room_id, message_count)
 		SELECT * FROM UNNEST($1::text[], $2::bigint[])
 		ON CONFLICT (room_id) DO UPDATE
 		SET message_count = room_message_stats.message_count + EXCLUDED.message_count`,
-		roomIds, count)
-
-	if err != nil {
+		roomIds, count); err != nil {
 		tx.Rollback(c.Ctx)
-		log.Printf("Error inserting into room_message_stats: %s", err)
+		log.Printf("[stats] room_message_stats: %s", err)
 		return err
 	}
 
-	err = tx.Commit(c.Ctx)
-	if err != nil {
-		log.Printf("Error committing the transaction: %s", err)
+	if err := tx.Commit(c.Ctx); err != nil {
+		log.Printf("[stats] commit: %s", err)
 		return err
 	}
 
-	log.Printf("Inserted stats in DB.")
 	return nil
 }
 
@@ -485,7 +494,7 @@ func (c *Consumer) ProcessStats() {
 		case <-ticker.C:
 			if len(batch) > 0 {
 				if err := c.writeStatsToDB(batch); err != nil {
-					log.Printf("Error writing stats to DB: %v", err)
+					log.Printf("[stats] error writing stats to DB: %s", err)
 				}
 			}
 			batch = batch[:0]
