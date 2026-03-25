@@ -12,9 +12,11 @@ import (
 
 // ServerEnv holds application configuration loaded from environment variables for Chat Server.
 type ServerEnv struct {
-	Name       string
-	Port       string
-	ServerHost string
+	Name        string
+	Port        string
+	ServerHost  string
+	ConsumerHost string
+	MetricsPort  int
 	RabbitEnv
 }
 
@@ -93,11 +95,15 @@ func LoadServerEnv() (*ServerEnv, error) {
 	port = strings.TrimSpace(port)
 	port = strings.TrimPrefix(port, ":")
 
+	consumerHost := strings.TrimSpace(os.Getenv("CONSUMER_HOST"))
+
 	return &ServerEnv{
-		Name:       os.Getenv("NAME"),
-		ServerHost: host,
-		Port:       port,
-		RabbitEnv:  *rabbit,
+		Name:         os.Getenv("NAME"),
+		ServerHost:   host,
+		Port:         port,
+		ConsumerHost: consumerHost,
+		MetricsPort:  atoiWithDefault(os.Getenv("METRICS_PORT"), 8080),
+		RabbitEnv:    *rabbit,
 	}, nil
 }
 

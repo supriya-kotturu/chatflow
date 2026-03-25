@@ -32,6 +32,7 @@ func RunPipelineLoadTest(config *ws.ClientConfig) {
 	c.CloseChannels()
 	c.GetPerformanceMetricsSummary(wallTime)
 	c.GetOverAllStats()
+	FetchAndPrintMetrics(c)
 
 	if c.CSVWriter != nil {
 		c.CSVWriter.Flush()

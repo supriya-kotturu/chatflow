@@ -37,6 +37,8 @@ type Client struct {
 	Pool             *Pool
 	RoomIDs          []string
 	UserIDs          []string
+	ConsumerHost     string
+	MetricsPort      int
 	MessageCount     atomic.Int32
 	expectedMessages atomic.Int32
 	receivedMessages atomic.Int32
@@ -71,12 +73,14 @@ func NewClient(cf *ClientConfig) *Client {
 	pool := NewWsClientPool(cf.PoolSize, e.ServerHost, e.Port, cf.MessageBuffer)
 
 	client := &Client{
-		Pool:     pool,
-		RoomIDs:  generate.NewRooms(cf.RoomCount),
-		UserIDs:  generate.NewUsers(cf.UserCount),
-		roomChan: make(chan *ConnElement, cf.MessageBuffer),
-		Wg:       &sync.WaitGroup{},
-		mu:       &sync.RWMutex{},
+		Pool:        pool,
+		RoomIDs:     generate.NewRooms(cf.RoomCount),
+		UserIDs:     generate.NewUsers(cf.UserCount),
+		ConsumerHost: e.ConsumerHost,
+		MetricsPort: e.MetricsPort,
+		roomChan:    make(chan *ConnElement, cf.MessageBuffer),
+		Wg:          &sync.WaitGroup{},
+		mu:          &sync.RWMutex{},
 	}
 
 	if cf.CollectMetrics {
