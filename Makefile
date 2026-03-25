@@ -3,8 +3,9 @@ SERVER_BIN := $(BINARY_DIR)/chat-server
 SERVER_V2_BIN := $(BINARY_DIR)/chat-server-v2
 CLIENT1_BIN := $(BINARY_DIR)/client-fanout
 CLIENT2_BIN := $(BINARY_DIR)/client-pipeline
+CONSUMER_V3_BIN := $(BINARY_DIR)/consumer-v3
 
-.PHONY: build build-server build-server-v2 build-client1 build-client2 test fmt vet run-server run-server-v2 run-client1 run-client2 clean
+.PHONY: build build-server build-server-v2 build-client1 build-client2 build-consumer-v3 build-all test fmt vet run-server run-server-v2 run-client1 run-client2 run-consumer-v3 docker-up docker-down clean
 
 build: build-server build-client1 build-client2
 
@@ -30,7 +31,20 @@ build-rabbitmq:
 	@mkdir -p $(BINARY_DIR)
 	go build -o $(BINARY_DIR)/rabbitmq ./rabbitmq
 
-build-all: build build-rabbitmq build-server build-client1 build-client2
+build-consumer-v3:
+	@mkdir -p $(BINARY_DIR)
+	go build -o $(CONSUMER_V3_BIN) ./consumer-v3
+
+build-server-v2-linux:
+	@mkdir -p $(BINARY_DIR)/server/html
+	GOOS=linux GOARCH=amd64 go build -o $(SERVER_V2_BIN) ./server-v2
+	cp -r server/html/* $(BINARY_DIR)/server/html/
+
+build-consumer-v3-linux:
+	@mkdir -p $(BINARY_DIR)
+	GOOS=linux GOARCH=amd64 go build -o $(CONSUMER_V3_BIN) ./consumer-v3
+
+build-all: build-server-v2 build-client2 build-consumer-v3
 
 test:
 	go test ./...
@@ -53,8 +67,17 @@ run-client1: build-client1
 run-client2: build-client2
 	./$(CLIENT2_BIN)
 
+run-consumer-v3: build-consumer-v3
+	./$(CONSUMER_V3_BIN)
+
 run-rabbitmq: build-rabbitmq
 	./$(BINARY_DIR)/rabbitmq
+
+docker-up:
+	docker compose up -d
+
+docker-down:
+	docker compose down
 
 clean:
 	rm -rf $(BINARY_DIR)

@@ -8,6 +8,7 @@ import (
 
 	"supriyakotturu.github.com/chatflow/consumer-v3/consumer"
 	"supriyakotturu.github.com/chatflow/consumer-v3/metrics"
+	"supriyakotturu.github.com/chatflow/pkg/env"
 )
 
 const (
@@ -18,6 +19,12 @@ const (
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
+
+	e, err := env.LoadConsumerEnv()
+	if err != nil {
+		fmt.Printf("Error loading environment: %+v\n", err)
+		os.Exit(1)
+	}
 
 	config := &consumer.ConsumerConfig{
 		Ctx:              ctx,
@@ -32,7 +39,7 @@ func main() {
 	}
 
 	metricsServer := metrics.NewServer(ctx, c.DBConn)
-	go metricsServer.Start(":8080")
+	go metricsServer.Start(fmt.Sprintf(":%d", e.MetricsPort))
 
 	c.Start()
 	<-ctx.Done()

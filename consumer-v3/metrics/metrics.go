@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 )
 
 type UserMessageCount struct {
@@ -21,13 +22,13 @@ type ActiveUsers struct {
 }
 
 type MessagePerMinute struct {
-	Bucket string `json:"bucket"`
-	Count  int    `json:"count"`
+	Bucket time.Time `json:"bucket"`
+	Count  int       `json:"count"`
 }
 
 type RoomActivity struct {
-	RoomId       string `json:"room_id"`
-	LastActivity string `json:"last_activity"`
+	RoomId       string    `json:"room_id"`
+	LastActivity time.Time `json:"last_activity"`
 }
 
 type UserRooms struct {
@@ -55,6 +56,7 @@ type Metrics struct {
 }
 
 func (s *Server) MetricsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	var metrics Metrics
 
 	count, err := s.getActiveUsersCount(r.Context())
@@ -111,7 +113,6 @@ func (s *Server) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	if _, err := w.Write(resp); err != nil {
 		log.Printf("Error writing metrics response: %v", err)
 	}
