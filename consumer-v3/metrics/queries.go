@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"time"
 )
 
 func (s *Server) getActiveUsersCount(ctx context.Context) (int, error) {
@@ -118,4 +119,52 @@ func (s *Server) getUserRooms(ctx context.Context, userId string) (UserRooms, er
 	userRooms.UserId = userId
 	userRooms.Rooms = history
 	return userRooms, rows.Err()
+}
+
+// Q1: messages in a room within a time range, ordered by timestamp.
+func (s *Server) getRoomMessages(ctx context.Context, roomId string, start, end time.Time, limit int) ([]Message, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT message_id, user_id, room_id, username, content, timestamp
+		 FROM messages
+		 WHERE room_id = $1 AND timestamp BETWEEN $2 AND $3
+		 ORDER BY timestamp ASC LIMIT $4`,
+		roomId, start, end, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []Message
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.MessageID, &m.UserID, &m.RoomID, &m.Username, &m.Content, &m.Timestamp); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, rows.Err()
+}
+
+// Q2: a user's message history across all rooms, most recent first.
+func (s *Server) getUserMessageHistory(ctx context.Context, userId string, limit int) ([]Message, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT message_id, user_id, room_id, username, content, timestamp
+		 FROM messages
+		 WHERE user_id = $1
+		 ORDER BY timestamp DESC LIMIT $2`,
+		userId, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []Message
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.MessageID, &m.UserID, &m.RoomID, &m.Username, &m.Content, &m.Timestamp); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, rows.Err()
 }

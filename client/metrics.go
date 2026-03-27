@@ -44,11 +44,22 @@ type userRoomCount struct {
 	RoomCount int    `json:"room_count"`
 }
 
+type message struct {
+	MessageID string `json:"message_id"`
+	UserID    string `json:"user_id"`
+	RoomID    string `json:"room_id"`
+	Username  string `json:"username"`
+	Content   string `json:"content"`
+	Timestamp string `json:"timestamp"`
+}
+
 type metricsResponse struct {
 	Core struct {
 		RoomMessages roomMessageCount `json:"room_messages"`
 		ActiveUsers  activeUsers      `json:"active_users"`
 		UserRooms    userRooms        `json:"user_rooms"`
+		RoomHistory  []message        `json:"room_history"`
+		UserHistory  []message        `json:"user_history"`
 	} `json:"core"`
 	Analytics struct {
 		MessagesPerMinute      []messagePerMinute `json:"messages_per_minute"`
@@ -90,6 +101,16 @@ func FetchAndPrintMetrics(c *ws.Client) {
 	fmt.Printf("  Most active user:       %s (%d rooms)\n", m.Core.UserRooms.UserId, len(m.Core.UserRooms.Rooms))
 	for _, r := range m.Core.UserRooms.Rooms {
 		fmt.Printf("    room %-20s last active: %s\n", r.RoomId, r.LastActivity)
+	}
+
+	fmt.Printf("\n--- Q1: Recent messages in room %s (last 1h, up to 5) ---\n", m.Core.RoomMessages.RoomId)
+	for _, msg := range m.Core.RoomHistory {
+		fmt.Printf("  [%s] user=%s: %s\n", msg.Timestamp, msg.Username, msg.Content)
+	}
+
+	fmt.Printf("\n--- Q2: Message history for user %s (last 5) ---\n", m.Core.UserRooms.UserId)
+	for _, msg := range m.Core.UserHistory {
+		fmt.Printf("  [%s] room=%s: %s\n", msg.Timestamp, msg.RoomID, msg.Content)
 	}
 
 	fmt.Println("\n--- Messages/min (last 15 buckets) ---")

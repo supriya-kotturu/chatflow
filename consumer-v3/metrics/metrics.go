@@ -41,11 +41,22 @@ type UserRoomCount struct {
 	RoomCount int    `json:"room_count"`
 }
 
+type Message struct {
+	MessageID string    `json:"message_id"`
+	UserID    string    `json:"user_id"`
+	RoomID    string    `json:"room_id"`
+	Username  string    `json:"username"`
+	Content   string    `json:"content"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
 type Metrics struct {
 	Core struct {
-		RoomMessages RoomMessageCount `json:"room_messages"`
-		ActiveUsers  ActiveUsers      `json:"active_users"`
-		UserRooms    UserRooms        `json:"user_rooms"`
+		RoomMessages   RoomMessageCount `json:"room_messages"`
+		ActiveUsers    ActiveUsers      `json:"active_users"`
+		UserRooms      UserRooms        `json:"user_rooms"`
+		RoomHistory    []Message        `json:"room_history"`
+		UserHistory    []Message        `json:"user_history"`
 	} `json:"core"`
 	Analytics struct {
 		MessagesPerMinute      []MessagePerMinute `json:"messages_per_minute"`
@@ -81,6 +92,24 @@ func (s *Server) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Error getting user rooms for %s: %v", mostActiveUser.UserId, err)
 		}
 		metrics.Core.UserRooms = userRooms
+
+		// Q2: user message history for the most active user (last 5 messages)
+		userHistory, err := s.getUserMessageHistory(r.Context(), mostActiveUser.UserId, 5)
+		if err != nil {
+			log.Printf("Error getting user message history for %s: %v", mostActiveUser.UserId, err)
+		}
+		metrics.Core.UserHistory = userHistory
+	}
+
+	// Q1: recent messages in the busiest room (last 1 hour, up to 5)
+	if metrics.Core.RoomMessages.RoomId != "" {
+		end := time.Now()
+		start := end.Add(-1 * time.Hour)
+		roomHistory, err := s.getRoomMessages(r.Context(), metrics.Core.RoomMessages.RoomId, start, end, 5)
+		if err != nil {
+			log.Printf("Error getting room messages for %s: %v", metrics.Core.RoomMessages.RoomId, err)
+		}
+		metrics.Core.RoomHistory = roomHistory
 	}
 
 	messagesPerMin, err := s.getMessagesPerMinute(r.Context(), 15)
